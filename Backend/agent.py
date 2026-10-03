@@ -1,6 +1,7 @@
 import json
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import ollama
 
@@ -29,52 +30,88 @@ class ModelResponseError(AgentError):
 
 
 # ---------------------------------------------------------------------------
-# Logging
+# Agent events
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AgentEvent:
+    """
+    Structured event emitted by the agent.
+
+    The event can be consumed by:
+        - CLI
+        - FastAPI
+        - SSE
+        - React
+        - future logging systems
+    """
+
+    type: str
+    message: str
+    timestamp: str
+
+
+# A callback that receives an AgentEvent.
+EventHandler = Callable[[AgentEvent], None]
+
+
+def create_event(
+    event_type: str,
+    message: str,
+) -> AgentEvent:
+
+    return AgentEvent(
+        type=event_type,
+        message=message,
+        timestamp=datetime.now().isoformat(
+            timespec="seconds"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI event handler
 # ---------------------------------------------------------------------------
 
 class AgentLogger:
     """
-    Small structured logger for local debugging.
+    CLI event handler.
 
-    Every important agent step receives:
-        [step] [status] message
+    Converts structured AgentEvents into readable terminal output.
     """
 
     def __init__(self) -> None:
         self.step = 0
 
-    def log(self, status: str, message: str) -> None:
-        self.step += 1
+    def handle(self, event: AgentEvent) -> None:
 
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.step += 1
 
         print(
             f"[{self.step:02d}] "
-            f"{timestamp} "
-            f"{status:<9} "
-            f"{message}"
+            f"{event.timestamp[-8:]} "
+            f"{event.type:<9} "
+            f"{event.message}"
         )
 
-    def start(self, message: str) -> None:
-        self.log("START", message)
 
-    def model(self, message: str) -> None:
-        self.log("MODEL", message)
+# ---------------------------------------------------------------------------
+# Agent state
+# ---------------------------------------------------------------------------
 
-    def tool(self, message: str) -> None:
-        self.log("TOOL", message)
+class AgentState:
 
-    def success(self, message: str) -> None:
-        self.log("SUCCESS", message)
+    def __init__(self) -> None:
+        self.history: dict[str, Any] | None = None
+        self.analysis: dict[str, Any] | None = None
 
-    def info(self, message: str) -> None:
-        self.log("INFO", message)
+    @property
+    def history_available(self) -> bool:
+        return self.history is not None
 
-    def warning(self, message: str) -> None:
-        self.log("WARNING", message)
-
-    def error(self, message: str) -> None:
-        self.log("ERROR", message)
+    @property
+    def analysis_available(self) -> bool:
+        return self.analysis is not None
 
 
 # ---------------------------------------------------------------------------
@@ -154,25 +191,6 @@ TOOLS = [
 
 
 # ---------------------------------------------------------------------------
-# Agent state
-# ---------------------------------------------------------------------------
-
-class AgentState:
-
-    def __init__(self) -> None:
-        self.history: dict[str, Any] | None = None
-        self.analysis: dict[str, Any] | None = None
-
-    @property
-    def history_available(self) -> bool:
-        return self.history is not None
-
-    @property
-    def analysis_available(self) -> bool:
-        return self.analysis is not None
-
-
-# ---------------------------------------------------------------------------
 # Tool execution
 # ---------------------------------------------------------------------------
 
@@ -180,7 +198,7 @@ def execute_tool(
     tool_name: str,
     arguments: dict[str, Any],
     state: AgentState,
-    logger: AgentLogger,
+    emit: EventHandler,
 ) -> dict[str, Any]:
 
     if tool_name not in {
@@ -218,9 +236,11 @@ def execute_tool(
                 "get_gold_history failed because 'period' cannot be empty."
             )
 
-        logger.tool(
-            f"Retrieving gold futures history "
-            f"(period={period})"
+        emit(
+            create_event(
+                "TOOL",
+                f"Retrieving gold futures history (period={period})",
+            )
         )
 
         try:
@@ -246,10 +266,16 @@ def execute_tool(
 
         state.history = history
 
-        logger.success(
-            "Gold history retrieved: "
-            f"{len(observations)} observations, "
-            f"latest date={history.get('latest_observation_date')}"
+        emit(
+            create_event(
+                "SUCCESS",
+                (
+                    "Gold history retrieved: "
+                    f"{len(observations)} observations, "
+                    f"latest date="
+                    f"{history.get('latest_observation_date')}"
+                ),
+            )
         )
 
         return {
@@ -279,8 +305,11 @@ def execute_tool(
                 "get_gold_history has not successfully retrieved data."
             )
 
-        logger.tool(
-            "Calculating descriptive statistics from retrieved history"
+        emit(
+            create_event(
+                "TOOL",
+                "Calculating descriptive statistics from retrieved history",
+            )
         )
 
         try:
@@ -299,8 +328,11 @@ def execute_tool(
 
         state.analysis = analysis
 
-        logger.success(
-            "Historical statistics calculated successfully"
+        emit(
+            create_event(
+                "SUCCESS",
+                "Historical statistics calculated successfully",
+            )
         )
 
         return analysis
@@ -356,50 +388,39 @@ def parse_tool_arguments(
 
 def run_required_tool_step(
     state: AgentState,
-    logger: AgentLogger,
+    emit: EventHandler,
 ) -> dict[str, Any]:
 
-    """
-    Enforce the application workflow.
-
-    The small LLM does not get to accidentally skip mandatory data
-    processing steps.
-
-    Required order:
-
-        get_gold_history
-            ↓
-        analyze_gold_history
-            ↓
-        final interpretation
-    """
-
-    # Step 1: retrieve data.
     if not state.history_available:
 
-        logger.info(
-            "Workflow requires market-data retrieval."
+        emit(
+            create_event(
+                "INFO",
+                "Workflow requires market-data retrieval.",
+            )
         )
 
         return execute_tool(
             "get_gold_history",
             {},
             state,
-            logger,
+            emit,
         )
 
-    # Step 2: calculate statistics.
     if not state.analysis_available:
 
-        logger.info(
-            "Workflow requires historical-statistics calculation."
+        emit(
+            create_event(
+                "INFO",
+                "Workflow requires historical-statistics calculation.",
+            )
         )
 
         return execute_tool(
             "analyze_gold_history",
             {},
             state,
-            logger,
+            emit,
         )
 
     raise AgentError(
@@ -411,13 +432,31 @@ def run_required_tool_step(
 # Agent runtime
 # ---------------------------------------------------------------------------
 
-def run_agent(goal: str) -> str:
+def run_agent(
+    goal: str,
+    event_handler: EventHandler | None = None,
+) -> str:
 
-    state = AgentState()
+    # -----------------------------------------------------------------------
+    # Default event handler
+    #
+    # If the caller does not provide one, use the CLI logger.
+    # -----------------------------------------------------------------------
+
     logger = AgentLogger()
 
-    logger.start(
-        f"GoldInfo agent started using model '{MODEL}'"
+    if event_handler is None:
+        event_handler = logger.handle
+
+    emit = event_handler
+
+    state = AgentState()
+
+    emit(
+        create_event(
+            "START",
+            f"GoldInfo agent started using model '{MODEL}'",
+        )
     )
 
     messages: list[Any] = [
@@ -432,18 +471,16 @@ def run_agent(goal: str) -> str:
     ]
 
     # -----------------------------------------------------------------------
-    # Phase 1 + 2:
-    #
-    # The application enforces data retrieval and analysis.
-    #
-    # This avoids depending on a 1.5B model to reliably execute a
-    # deterministic two-step workflow.
+    # Phase 1: market-data retrieval
     # -----------------------------------------------------------------------
 
     while not state.history_available:
 
-        logger.model(
-            "Requesting model response before market-data retrieval"
+        emit(
+            create_event(
+                "MODEL",
+                "Requesting model response before market-data retrieval",
+            )
         )
 
         try:
@@ -502,11 +539,18 @@ def run_agent(goal: str) -> str:
                 raw_arguments,
             )
 
+            emit(
+                create_event(
+                    "TOOL",
+                    f"Model requested tool '{tool_name}'",
+                )
+            )
+
             result = execute_tool(
                 tool_name,
                 arguments,
                 state,
-                logger,
+                emit,
             )
 
             messages.append(
@@ -519,17 +563,20 @@ def run_agent(goal: str) -> str:
 
             continue
 
-        # Model skipped the required tool.
-        #
-        # Instead of failing, the application enforces the workflow.
-        logger.warning(
-            "Model attempted to finish before retrieving market data. "
-            "Application is enforcing the required retrieval step."
+        emit(
+            create_event(
+                "WARNING",
+                (
+                    "Model attempted to finish before retrieving "
+                    "market data. Application is enforcing the "
+                    "required retrieval step."
+                ),
+            )
         )
 
         result = run_required_tool_step(
             state,
-            logger,
+            emit,
         )
 
         messages.append(
@@ -541,16 +588,19 @@ def run_agent(goal: str) -> str:
         )
 
     # -----------------------------------------------------------------------
-    # Phase 2:
-    #
-    # History now exists. Analysis is mandatory.
+    # Phase 2: statistical analysis
     # -----------------------------------------------------------------------
 
     if not state.analysis_available:
 
-        logger.model(
-            "Market data is ready. Requesting model continuation "
-            "for the analysis step."
+        emit(
+            create_event(
+                "MODEL",
+                (
+                    "Market data is ready. Requesting model continuation "
+                    "for the analysis step."
+                ),
+            )
         )
 
         try:
@@ -611,11 +661,18 @@ def run_agent(goal: str) -> str:
                     raw_arguments,
                 )
 
+                emit(
+                    create_event(
+                        "TOOL",
+                        f"Model requested tool '{tool_name}'",
+                    )
+                )
+
                 result = execute_tool(
                     tool_name,
                     arguments,
                     state,
-                    logger,
+                    emit,
                 )
 
                 messages.append(
@@ -631,14 +688,20 @@ def run_agent(goal: str) -> str:
 
             if not analysis_tool_found:
 
-                logger.warning(
-                    "Model did not request analyze_gold_history. "
-                    "Application is enforcing the required analysis step."
+                emit(
+                    create_event(
+                        "WARNING",
+                        (
+                            "Model did not request analyze_gold_history. "
+                            "Application is enforcing the required "
+                            "analysis step."
+                        ),
+                    )
                 )
 
                 result = run_required_tool_step(
                     state,
-                    logger,
+                    emit,
                 )
 
                 messages.append(
@@ -651,18 +714,20 @@ def run_agent(goal: str) -> str:
 
         else:
 
-            # This is exactly the failure we were seeing.
-            #
-            # Do not fail. The application knows that analysis is
-            # mandatory, so execute it directly.
-            logger.warning(
-                "Model returned final text before calculating statistics. "
-                "Application is enforcing the required analysis step."
+            emit(
+                create_event(
+                    "WARNING",
+                    (
+                        "Model returned final text before calculating "
+                        "statistics. Application is enforcing the "
+                        "required analysis step."
+                    ),
+                )
             )
 
             result = run_required_tool_step(
                 state,
-                logger,
+                emit,
             )
 
             messages.append(
@@ -674,9 +739,7 @@ def run_agent(goal: str) -> str:
             )
 
     # -----------------------------------------------------------------------
-    # Phase 3:
-    #
-    # Both Python tools have completed. Now ask the LLM to interpret.
+    # Validate application state before final interpretation
     # -----------------------------------------------------------------------
 
     if not state.history_available:
@@ -691,14 +754,20 @@ def run_agent(goal: str) -> str:
             "historical statistics were not calculated."
         )
 
-    logger.model(
-        "Data retrieval and statistical analysis are complete. "
-        "Requesting final interpretation from the model."
+    # -----------------------------------------------------------------------
+    # Phase 3: final LLM interpretation
+    # -----------------------------------------------------------------------
+
+    emit(
+        create_event(
+            "MODEL",
+            (
+                "Data retrieval and statistical analysis are complete. "
+                "Requesting final interpretation from the model."
+            ),
+        )
     )
 
-    # Give the model the authoritative calculated result.
-    #
-    # The model does not need the raw 252-row history.
     messages.append(
         {
             "role": "user",
@@ -753,19 +822,25 @@ def run_agent(goal: str) -> str:
             "Ollama returned an empty final analysis."
         )
 
-    logger.success(
-        "Final historical interpretation generated successfully."
+    emit(
+        create_event(
+            "SUCCESS",
+            "Final historical interpretation generated successfully.",
+        )
     )
 
-    logger.info(
-        "Agent execution completed successfully."
+    emit(
+        create_event(
+            "INFO",
+            "Agent execution completed successfully.",
+        )
     )
 
     return final_content
 
 
 # ---------------------------------------------------------------------------
-# Program entry point
+# CLI entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":

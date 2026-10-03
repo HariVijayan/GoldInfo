@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+yfinance
+ollama
+pandas
+requests
