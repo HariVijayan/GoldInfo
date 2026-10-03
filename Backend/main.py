@@ -3,15 +3,12 @@ import json
 from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent import AgentError, AgentEvent, run_agent
 
-
-# ---------------------------------------------------------------------------
-# FastAPI application
-# ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="GoldInfo API",
@@ -20,9 +17,17 @@ app = FastAPI(
 )
 
 
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
 
 class AnalysisRequest(BaseModel):
     goal: str
@@ -37,33 +42,14 @@ class HealthResponse(BaseModel):
     status: str
 
 
-# ---------------------------------------------------------------------------
-# Health endpoint
-# ---------------------------------------------------------------------------
-
-@app.get(
-    "/api/health",
-    response_model=HealthResponse,
-)
+@app.get("/api/health", response_model=HealthResponse)
 def health_check() -> HealthResponse:
-
-    return HealthResponse(
-        status="ok",
-    )
+    return HealthResponse(status="ok")
 
 
-# ---------------------------------------------------------------------------
-# Standard analysis endpoint
-# ---------------------------------------------------------------------------
-
-@app.post(
-    "/api/analyze",
-    response_model=AnalysisResponse,
-)
+@app.post("/api/analyze", response_model=AnalysisResponse)
 def analyze(request: AnalysisRequest) -> AnalysisResponse:
-
     try:
-
         result = run_agent(request.goal)
 
         return AnalysisResponse(
@@ -72,31 +58,18 @@ def analyze(request: AnalysisRequest) -> AnalysisResponse:
         )
 
     except AgentError as exc:
-
         return AnalysisResponse(
             status="error",
             analysis=f"Analysis failed: {exc}",
         )
 
 
-# ---------------------------------------------------------------------------
-# SSE helper
-# ---------------------------------------------------------------------------
-
-def format_sse(
-    event_name: str,
-    data: dict,
-) -> str:
-
+def format_sse(event_name: str, data: dict) -> str:
     return (
         f"event: {event_name}\n"
         f"data: {json.dumps(data)}\n\n"
     )
 
-
-# ---------------------------------------------------------------------------
-# Streaming analysis
-# ---------------------------------------------------------------------------
 
 async def analysis_stream(
     goal: str,
@@ -107,16 +80,6 @@ async def analysis_stream(
     def handle_event(event: AgentEvent) -> None:
         queue.put_nowait(event)
 
-    # -----------------------------------------------------------------------
-    # Run the synchronous agent in a worker thread.
-    #
-    # This is important because run_agent() performs blocking operations:
-    #     - yfinance
-    #     - Ollama
-    #
-    # We don't want those operations blocking FastAPI's event loop.
-    # -----------------------------------------------------------------------
-
     agent_task = asyncio.create_task(
         asyncio.to_thread(
             run_agent,
@@ -126,15 +89,9 @@ async def analysis_stream(
     )
 
     try:
-
         while True:
 
-            # ---------------------------------------------------------------
-            # If an event is available, stream it immediately.
-            # ---------------------------------------------------------------
-
             if not queue.empty():
-
                 event = await queue.get()
 
                 if event is None:
@@ -151,17 +108,12 @@ async def analysis_stream(
 
                 continue
 
-            # ---------------------------------------------------------------
-            # Agent completed.
-            # ---------------------------------------------------------------
-
             if agent_task.done():
 
                 try:
                     result = agent_task.result()
 
                 except AgentError as exc:
-
                     yield format_sse(
                         "error",
                         {
@@ -171,7 +123,6 @@ async def analysis_stream(
                     )
 
                 except Exception as exc:
-
                     yield format_sse(
                         "error",
                         {
@@ -184,7 +135,6 @@ async def analysis_stream(
                     )
 
                 else:
-
                     yield format_sse(
                         "final",
                         {
@@ -195,21 +145,12 @@ async def analysis_stream(
 
                 break
 
-            # ---------------------------------------------------------------
-            # Give the event loop a chance to process other requests.
-            # ---------------------------------------------------------------
-
             await asyncio.sleep(0.05)
 
     finally:
-
         if not agent_task.done():
             agent_task.cancel()
 
-
-# ---------------------------------------------------------------------------
-# SSE endpoint
-# ---------------------------------------------------------------------------
 
 @app.post("/api/analyze/stream")
 async def analyze_stream(
