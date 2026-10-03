@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from market_data import GoldHistory
+from conversion import GoldInrPerGramObservation
 
 
 class GoldAnalysis:
@@ -46,6 +46,7 @@ class GoldAnalysis:
 
     def to_dict(self) -> dict:
         return {
+            "unit": "INR/gram",
             "latest_price": self.latest_price,
             "latest_observation_date": self.latest_observation_date,
             "previous_price": self.previous_price,
@@ -80,13 +81,14 @@ def percentage_change(
 
 
 def find_reference_observation(
-    observations: list[dict],
+    observations: list[GoldInrPerGramObservation],
     target_date: date,
-) -> dict | None:
+) -> GoldInrPerGramObservation | None:
     """
     Return the latest observation on or before target_date.
 
-    This handles weekends and market holidays naturally.
+    This preserves the existing calendar-day reference policy
+    and naturally handles weekends and market holidays.
     """
 
     reference = None
@@ -103,26 +105,38 @@ def find_reference_observation(
 
 
 def analyze_gold_history(
-    history: GoldHistory,
+    observations: list[GoldInrPerGramObservation],
 ) -> dict:
     """
-    Calculate descriptive statistics for historical gold futures data.
+    Calculate descriptive statistics using gold prices in INR per gram.
+
+    The input must be the aligned/derived INR-per-gram dataset from
+    conversion.py. No USD or INR-per-ounce values are analyzed here.
     """
 
-    observations = history["observations"]
-
     if not observations:
-        raise ValueError("Cannot analyze an empty observation set.")
+        raise ValueError(
+            "Cannot analyze an empty INR-per-gram observation set."
+        )
 
     latest = observations[-1]
-    latest_price = latest["close"]
+    latest_price = latest["gold_inr_per_gram"]
     latest_date = date.fromisoformat(latest["date"])
 
-    # Previous available trading session.
+    # Previous available observation.
     previous = observations[-2] if len(observations) >= 2 else None
 
-    previous_price = previous["close"] if previous else None
-    previous_date = previous["date"] if previous else None
+    previous_price = (
+        previous["gold_inr_per_gram"]
+        if previous
+        else None
+    )
+
+    previous_date = (
+        previous["date"]
+        if previous
+        else None
+    )
 
     one_session_change = None
 
@@ -145,7 +159,7 @@ def analyze_gold_history(
     if seven_day_reference is not None:
         seven_day_change = percentage_change(
             latest_price,
-            seven_day_reference["close"],
+            seven_day_reference["gold_inr_per_gram"],
         )
 
     # Approximately 30 calendar days.
@@ -161,22 +175,22 @@ def analyze_gold_history(
     if thirty_day_reference is not None:
         thirty_day_change = percentage_change(
             latest_price,
-            thirty_day_reference["close"],
+            thirty_day_reference["gold_inr_per_gram"],
         )
 
     # Historical high and low.
     high_observation = max(
         observations,
-        key=lambda observation: observation["close"],
+        key=lambda observation: observation["gold_inr_per_gram"],
     )
 
     low_observation = min(
         observations,
-        key=lambda observation: observation["close"],
+        key=lambda observation: observation["gold_inr_per_gram"],
     )
 
-    historical_high = high_observation["close"]
-    historical_low = low_observation["close"]
+    historical_high = high_observation["gold_inr_per_gram"]
+    historical_low = low_observation["gold_inr_per_gram"]
 
     # Position of latest price within historical range.
     range_size = historical_high - historical_low
@@ -231,10 +245,28 @@ def analyze_gold_history(
 
 
 if __name__ == "__main__":
-    from market_data import get_gold_history
+    from conversion import convert_gold_history
+    from market_data import get_gold_history, get_usd_inr_history
 
-    history = get_gold_history()
-    analysis = analyze_gold_history(history)
+    PERIOD = "1y"
+
+    print("Retrieving source data...")
+    gold_history = get_gold_history(period=PERIOD)
+    usd_inr_history = get_usd_inr_history(period=PERIOD)
+
+    print("Converting and aligning data...")
+    converted = convert_gold_history(
+        gold_history=gold_history,
+        usd_inr_history=usd_inr_history,
+        requested_period=PERIOD,
+    )
+
+    print("Analyzing INR-per-gram data...")
+    analysis = analyze_gold_history(
+        converted["gold_inr_per_gram"]
+    )
+
+    print("\n=== GOLD ANALYSIS ===")
 
     for key, value in analysis.items():
         print(f"{key}: {value}")
