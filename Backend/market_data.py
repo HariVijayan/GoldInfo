@@ -115,7 +115,7 @@ def _download_close_observations(
 
 
 def get_gold_history(
-    period: str = "1y",
+    period: str,
     ticker: str = GOLD_TICKER,
     interval: str = "1d",
 ) -> GoldHistory:
@@ -135,7 +135,7 @@ def get_gold_history(
 
 
 def get_usd_inr_history(
-    period: str = "1y",
+    period: str,
     ticker: str = USD_INR_TICKER,
     interval: str = "1d",
 ) -> UsdInrHistory:
@@ -155,8 +155,14 @@ def get_usd_inr_history(
 
 
 if __name__ == "__main__":
-    gold_history = get_gold_history(period="1y")
-    usd_inr_history = get_usd_inr_history(period="1y")
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--period", required=True)
+    args = parser.parse_args()
+
+    gold_history = get_gold_history(period=args.period)
+    usd_inr_history = get_usd_inr_history(period=args.period)
 
     print("=== GOLD FUTURES ===")
     print(f"Ticker: {gold_history['ticker']}")

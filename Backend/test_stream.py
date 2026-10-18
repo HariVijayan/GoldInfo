@@ -1,13 +1,19 @@
+import argparse
+
 import requests
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--period", required=True)
+args = parser.parse_args()
 
 
 response = requests.post(
     "http://127.0.0.1:8000/api/analyze/stream",
     json={
         "goal": (
-            "Analyze approximately one year of "
-            "historical gold futures prices."
-        )
+            "Analyze historical gold futures prices."
+        ),
+        "period": args.period,
     },
     stream=True,
 )
