@@ -1,194 +1,107 @@
-:root {
-  font-family:
-    Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-
-  color: #1f2937;
-  background: #f3f4f6;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+.analysis-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-}
-
-button,
-textarea {
+.analysis-controls select,
+#period {
+  width: 100%;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
   font: inherit;
 }
 
-.app {
-  min-height: 100vh;
-  padding: 48px 20px;
-}
-
-.container {
-  width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.header {
-  margin-bottom: 28px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-
-h1 {
-  margin: 0;
-  font-size: 42px;
-  line-height: 1.1;
-}
-
-.subtitle {
-  margin: 10px 0 0;
-  color: #6b7280;
-  font-size: 16px;
-}
-
-.card {
-  margin-bottom: 20px;
-  padding: 24px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-label {
-  display: block;
-  margin-bottom: 10px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-textarea {
-  display: block;
-  width: 100%;
-  padding: 12px;
-  resize: vertical;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  outline: none;
-}
-
-textarea:focus {
-  border-color: #6b7280;
-}
-
-button {
-  margin-top: 14px;
-  padding: 11px 18px;
-  border: 0;
-  border-radius: 8px;
-  background: #111827;
-  color: #ffffff;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-button:hover:not(:disabled) {
-  background: #374151;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
+  margin-top: 20px;
 }
 
-h2 {
-  margin: 0;
-  font-size: 18px;
-  color: red;
+.metric-card {
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  min-width: 0;
 }
 
-.running-indicator,
-.success-indicator {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.metric-card h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
 }
 
-.events {
+.metric-card p {
+  margin: 0 0 6px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.metric-card small {
+  color: #6b7280;
+}
+
+@media (max-width: 600px) {
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.analysis-controls {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 18px;
-}
-
-.event {
-  display: grid;
-  grid-template-columns: 80px 1fr;
+  align-items: flex-start;
   gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid #f3f4f6;
 }
 
-.event:last-child {
-  border-bottom: 0;
+.analysis-controls select,
+#period {
+  width: 100%;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  font: inherit;
 }
 
-.event-type {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
 }
 
-.event-message {
-  color: #4b5563;
-  font-size: 14px;
+.metric-card {
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  min-width: 0;
 }
 
-.analysis {
-  margin-top: 18px;
-  white-space: pre-wrap;
-  line-height: 1.7;
-  color: #374151;
+.metric-card h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
 }
 
-.error-card {
-  border-color: #fca5a5;
+.metric-card p {
+  margin: 0 0 6px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.error-card p {
-  margin: 10px 0 0;
-  color: #991b1b;
-  line-height: 1.6;
+.metric-card small {
+  color: #6b7280;
 }
 
-@media (max-width: 640px) {
-  .app {
-    padding: 28px 14px;
-  }
-
-  h1 {
-    font-size: 34px;
-  }
-
-  .card {
-    padding: 18px;
-  }
-
-  .event {
+@media (max-width: 600px) {
+  .metrics-grid {
     grid-template-columns: 1fr;
-    gap: 4px;
   }
 }
