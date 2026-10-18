@@ -1,11 +1,12 @@
 import asyncio
 import json
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent import AgentError, AgentEvent, run_agent
@@ -14,7 +15,7 @@ from agent import AgentError, AgentEvent, run_agent
 app = FastAPI(
     title="GoldInfo API",
     description="Local gold price analysis agent API",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
@@ -43,13 +44,18 @@ class AnalysisRequest(BaseModel):
     period: str = Field(min_length=1)
 
 
-class AnalysisResponse(BaseModel):
-    status: str
-    analysis: str
-
-
 class HealthResponse(BaseModel):
     status: str
+
+
+def empty_run_metadata() -> dict[str, Any]:
+    return {"file_count": 0, "files": []}
+
+
+def extract_run_metadata(exc: Exception) -> dict[str, Any]:
+    """Return the artifacts produced before a failure, if any."""
+
+    return getattr(exc, "run_metadata", None) or empty_run_metadata()
 
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -57,24 +63,25 @@ def health_check() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/api/analyze", response_model=AnalysisResponse)
-def analyze(request: AnalysisRequest) -> AnalysisResponse:
+@app.post("/api/analyze")
+def analyze(request: AnalysisRequest) -> JSONResponse:
     try:
         result = run_agent(
             goal=request.goal,
             period=request.period,
         )
-
-        return AnalysisResponse(
-            status="success",
-            analysis=result,
-        )
-
     except AgentError as exc:
-        return AnalysisResponse(
-            status="error",
-            analysis=f"Analysis failed: {exc}",
+        return JSONResponse(
+            content=jsonable_encoder(
+                {
+                    "status": "error",
+                    "interpretation": f"Analysis failed: {exc}",
+                    "metadata": extract_run_metadata(exc),
+                }
+            )
         )
+
+    return JSONResponse(content=jsonable_encoder(result))
 
 
 def format_sse(event_name: str, data: dict) -> str:
@@ -84,15 +91,40 @@ def format_sse(event_name: str, data: dict) -> str:
     )
 
 
+def format_agent_event(event: AgentEvent) -> list[str]:
+    """
+    One agent event becomes a lightweight "status" message, plus an
+    "artifact" message when the event carries a file.
+    """
+
+    messages = [
+        format_sse(
+            "status",
+            {
+                "type": event.type,
+                "message": event.message,
+                "timestamp": event.timestamp,
+            },
+        )
+    ]
+
+    if event.artifact is not None:
+        messages.append(format_sse("artifact", event.artifact))
+
+    return messages
+
+
 async def analysis_stream(
     goal: str,
     period: str,
 ) -> AsyncGenerator[str, None]:
 
-    queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
+    event_loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
 
     def handle_event(event: AgentEvent) -> None:
-        queue.put_nowait(event)
+        # The agent runs in a worker thread; hand events to the loop safely.
+        event_loop.call_soon_threadsafe(queue.put_nowait, event)
 
     agent_task = asyncio.create_task(
         asyncio.to_thread(
@@ -105,59 +137,43 @@ async def analysis_stream(
 
     try:
         while True:
-
-            if not queue.empty():
-                event = await queue.get()
-
-                if event is None:
-                    break
-
-                yield format_sse(
-                    "status",
-                    {
-                        "type": event.type,
-                        "message": event.message,
-                        "timestamp": event.timestamp,
-                    },
-                )
-
-                continue
+            while not queue.empty():
+                for message in format_agent_event(queue.get_nowait()):
+                    yield message
 
             if agent_task.done():
-
-                try:
-                    result = agent_task.result()
-
-                except AgentError as exc:
-                    yield format_sse(
-                        "error",
-                        {
-                            "type": "ERROR",
-                            "message": str(exc),
-                        },
-                    )
-
-                except Exception as exc:
-                    yield format_sse(
-                        "error",
-                        {
-                            "type": "ERROR",
-                            "message": (
-                                "An unexpected server error occurred. "
-                                f"Reason: {exc}"
-                            ),
-                        },
-                    )
-
-                else:
-                    yield format_sse(
-                        "final",
-                        result,
-                    )
-
                 break
 
             await asyncio.sleep(0.05)
+
+        try:
+            result = agent_task.result()
+
+        except AgentError as exc:
+            yield format_sse(
+                "error",
+                {
+                    "type": "ERROR",
+                    "message": str(exc),
+                    "metadata": extract_run_metadata(exc),
+                },
+            )
+
+        except Exception as exc:
+            yield format_sse(
+                "error",
+                {
+                    "type": "ERROR",
+                    "message": (
+                        "An unexpected server error occurred. "
+                        f"Reason: {exc}"
+                    ),
+                    "metadata": extract_run_metadata(exc),
+                },
+            )
+
+        else:
+            yield format_sse("final", result)
 
     finally:
         if not agent_task.done():

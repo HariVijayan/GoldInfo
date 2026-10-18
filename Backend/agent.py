@@ -7,6 +7,16 @@ import ollama
 from market_data import get_gold_history, get_usd_inr_history
 from conversion import convert_gold_history
 from analysis import analyze_gold_history
+from artifacts import (
+    ArtifactFile,
+    build_analysis_report_artifact,
+    build_gold_inr_per_gram_artifact,
+    build_gold_inr_per_ounce_artifact,
+    build_gold_usd_per_gram_artifact,
+    build_gold_usd_per_ounce_artifact,
+    build_run_metadata,
+    build_usd_inr_artifact,
+)
 
 from dataclasses import dataclass, field
 import uuid
@@ -20,7 +30,14 @@ MAX_ITERATIONS = 5
 # ---------------------------------------------------------------------------
 
 class AgentError(Exception):
-    """Base exception for expected agent-runtime failures."""
+    """
+    Base exception for expected agent-runtime failures.
+
+    run_metadata holds every artifact produced before the failure so the
+    caller can still return the intermediate data.
+    """
+
+    run_metadata: dict[str, Any] | None = None
 
 
 class ToolExecutionError(AgentError):
@@ -51,16 +68,22 @@ class AgentEvent:
     type: str
     message: str
     timestamp: str
+    artifact: dict[str, Any] | None = None
 
 
 EventHandler = Callable[[AgentEvent], None]
 
 
-def create_event(event_type: str, message: str) -> AgentEvent:
+def create_event(
+    event_type: str,
+    message: str,
+    artifact: dict[str, Any] | None = None,
+) -> AgentEvent:
     return AgentEvent(
         type=event_type,
         message=message,
         timestamp=datetime.now().isoformat(timespec="seconds"),
+        artifact=artifact,
     )
 
 # ---------------------------------------------------------------------------
@@ -74,6 +97,7 @@ class AgentResult:
     analysis: dict[str, Any]
     interpretation: str
     processed_data: dict[str, Any]
+    metadata: dict[str, Any]
     status: str
 
 
@@ -133,6 +157,9 @@ class AgentState:
     analysis: dict[str, Any] | None = None
     interpretation: str | None = None
 
+    # Downloadable intermediate files, keyed by filename
+    artifact_files: dict[str, ArtifactFile] = field(default_factory=dict)
+
     # Lifecycle tracking
     status: str = "initialized"
     current_stage: str = "request_received"
@@ -164,6 +191,66 @@ class AgentState:
             "target_currency": self.target_currency,
             "target_unit": self.target_unit,
         }
+
+
+# ---------------------------------------------------------------------------
+# Artifact registration
+# ---------------------------------------------------------------------------
+
+def register_artifact(
+    state: AgentState,
+    emit: EventHandler,
+    artifact: ArtifactFile,
+    message: str | None = None,
+) -> None:
+    """Store an artifact on the run state and announce it to listeners."""
+
+    state.artifact_files[artifact["filename"]] = artifact
+
+    if message is None:
+        row_count = artifact["row_count"]
+        message = (
+            f"Prepared {artifact['filename']} ({row_count} rows)"
+            if row_count is not None
+            else f"Prepared {artifact['filename']}"
+        )
+
+    emit(create_event("ARTIFACT", message, artifact=dict(artifact)))
+
+
+def register_analysis_report(
+    state: AgentState,
+    emit: EventHandler,
+    interpretation: str | None = None,
+) -> None:
+    if state.analysis is None:
+        raise AgentError(
+            "Cannot build analysis.txt before statistics are calculated."
+        )
+
+    dataset_metadata = (
+        state.converted_data.get("metadata")
+        if state.converted_data
+        else None
+    )
+
+    register_artifact(
+        state,
+        emit,
+        build_analysis_report_artifact(
+            run_id=state.run_id,
+            run_started_at=state.created_at,
+            request_parameters=state.request_parameters(),
+            analysis=state.analysis,
+            dataset_metadata=dataset_metadata,
+            interpretation=interpretation,
+        ),
+        message=(
+            "Updated analysis.txt with the model interpretation"
+            if interpretation
+            else "Prepared analysis.txt (statistics)"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +439,13 @@ def execute_tool(
             )
         )
 
+        register_artifact(
+            state, emit, build_gold_usd_per_ounce_artifact(history)
+        )
+        register_artifact(
+            state, emit, build_gold_usd_per_gram_artifact(history)
+        )
+
         # ---------------------------------------------------------------
         # USD/INR retrieval
         # ---------------------------------------------------------------
@@ -397,6 +491,10 @@ def execute_tool(
                 f"{len(fx_observations)} observations, "
                 f"latest date={usd_inr_history.get('latest_observation_date')}",
             )
+        )
+
+        register_artifact(
+            state, emit, build_usd_inr_artifact(usd_inr_history)
         )
 
         return {
@@ -486,6 +584,13 @@ def execute_tool(
             )
         )
 
+        register_artifact(
+            state, emit, build_gold_inr_per_ounce_artifact(converted_data)
+        )
+        register_artifact(
+            state, emit, build_gold_inr_per_gram_artifact(converted_data)
+        )
+
         # ---------------------------------------------------------------
         # Deterministic analysis
         # ---------------------------------------------------------------
@@ -519,6 +624,8 @@ def execute_tool(
                 "Historical INR-per-gram statistics calculated successfully",
             )
         )
+
+        register_analysis_report(state, emit)
 
         return analysis
 
@@ -572,17 +679,35 @@ def run_agent(
     goal: str,
     period: str,
     event_handler: EventHandler | None = None,
-) -> str:
+) -> AgentResult:
     logger = AgentLogger()
 
     if event_handler is None:
         event_handler = logger.handle
 
-    emit = event_handler
     state = AgentState(
         goal=goal,
         period=period,
     )
+
+    try:
+        return _execute_agent_workflow(state, event_handler)
+    except Exception as exc:
+        # Attach whatever was produced before the failure so callers can
+        # still return the intermediate data.
+        try:
+            exc.run_metadata = build_run_metadata(state.artifact_files)
+        except Exception:
+            pass
+        raise
+
+
+def _execute_agent_workflow(
+    state: AgentState,
+    emit: EventHandler,
+) -> AgentResult:
+    goal = state.goal
+    period = state.period
 
     emit(
         create_event(
@@ -958,12 +1083,16 @@ def run_agent(
         )
     )
 
+    state.interpretation = final_content
+    register_analysis_report(state, emit, interpretation=final_content)
+
     return AgentResult(
         run_id=state.run_id,
         request=state.request_parameters(),
         analysis=state.analysis,
         interpretation=final_content,
         processed_data=state.converted_data,
+        metadata=build_run_metadata(state.artifact_files),
         status="success",
     )
 
@@ -991,7 +1120,10 @@ recommendations.
     try:
         result = run_agent(goal, period=args.period)
         print("\n=== FINAL ANALYSIS ===")
-        print(result)
+        print(result.interpretation)
+        print("\n=== METADATA FILES ===")
+        for artifact_file in result.metadata["files"]:
+            print(f"{artifact_file['filename']}: {artifact_file['description']}")
     except AgentError as exc:
         print("\n=== ANALYSIS FAILED ===")
         print(f"Reason: {exc}")
