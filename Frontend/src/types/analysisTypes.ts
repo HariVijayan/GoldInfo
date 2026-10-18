@@ -4,14 +4,28 @@ export type AgentEvent = {
   timestamp?: string;
 };
 
+export type ArtifactFile = {
+  filename: string;
+  media_type: string;
+  description: string;
+  row_count: number | null;
+  content: string;
+};
+
+export type RunMetadata = {
+  generated_at?: string;
+  file_count: number;
+  files: ArtifactFile[];
+};
+
 export type AnalysisState = "idle" | "running" | "success" | "error";
 
 export type AnalysisMetrics = {
   unit: string;
   latest_price: number;
-  latest_date: string;
+  latest_observation_date: string;
   previous_price: number | null;
-  previous_date: string | null;
+  previous_observation_date: string | null;
   one_session_change_pct: number | null;
   seven_day_change_pct: number | null;
   thirty_day_change_pct: number | null;
@@ -32,6 +46,7 @@ export type AgentResult = {
   analysis: AnalysisMetrics;
   interpretation: string;
   processed_data: Record<string, unknown>;
+  metadata?: RunMetadata;
   status: "success" | "error";
 };
 

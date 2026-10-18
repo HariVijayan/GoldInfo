@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import { MetricCard } from "./components/MetricCard";
 import { ProgressTimeline } from "./components/ProgressTimeline";
+import { MetadataPanel } from "./components/MetadataPanel";
 import { RangeGauge } from "./components/RangeGauge";
 import { DEFAULT_PERIOD_VALUE, PERIOD_OPTIONS } from "./config/analysisConfig";
 import { streamGoldAnalysis } from "./services/analysisStreamClient";
-import type { AgentEvent, AgentResult, AnalysisState } from "./types/analysisTypes";
+import type { AgentEvent, AgentResult, AnalysisState, ArtifactFile } from "./types/analysisTypes";
+import { upsertArtifactFile } from "./utils/artifactFiles";
 import { formatDate, formatPercent, formatPrice, getChangeTone } from "./utils/formatters";
 
 function App() {
@@ -14,6 +16,7 @@ function App() {
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [analysisResult, setAnalysisResult] = useState<AgentResult | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [artifactFiles, setArtifactFiles] = useState<ArtifactFile[]>([]);
   const activeRequestController = useRef<AbortController | null>(null);
 
   useEffect(() => () => activeRequestController.current?.abort(), []);
@@ -27,13 +30,22 @@ function App() {
     setAgentEvents([]);
     setAnalysisResult(null);
     setErrorMessage("");
+    setArtifactFiles([]);
 
     try {
       const finalResult = await streamGoldAnalysis(
         selectedPeriod,
-        (agentEvent) => setAgentEvents((currentEvents) => [...currentEvents, agentEvent]),
+        {
+          onStatusEvent: (agentEvent) =>
+            setAgentEvents((currentEvents) => [...currentEvents, agentEvent]),
+          onArtifactFile: (artifactFile) =>
+            setArtifactFiles((currentFiles) => upsertArtifactFile(currentFiles, artifactFile)),
+        },
         requestController.signal
       );
+      if (finalResult.metadata?.files.length) {
+        setArtifactFiles(finalResult.metadata.files);
+      }
       setAnalysisResult(finalResult);
       setAnalysisState("success");
     } catch (caughtError) {
@@ -105,7 +117,7 @@ function App() {
         {analysisState === "success" && analysisResult && metrics && (
           <>
             <section className="panel hero-panel">
-              <p className="hero-label">Latest price, {formatDate(metrics.latest_date)}</p>
+              <p className="hero-label">Latest price, {formatDate(metrics.latest_observation_date)}</p>
               <p className="hero-price">
                 {formatPrice(metrics.latest_price)} <span className="hero-unit">{metrics.unit}</span>
               </p>
@@ -143,7 +155,7 @@ function App() {
               <MetricCard
                 metricTitle="Previous price"
                 metricValue={`${formatPrice(metrics.previous_price)} ${metrics.unit}`}
-                metricCaption={formatDate(metrics.previous_date)}
+                metricCaption={formatDate(metrics.previous_observation_date)}
               />
               <MetricCard
                 metricTitle="Below historical high"
@@ -163,16 +175,15 @@ function App() {
               </div>
             </section>
 
-            <details className="panel run-details">
-              <summary>Run details</summary>
-              <dl>
-                <dt>Run ID</dt>
-                <dd>{analysisResult.run_id}</dd>
-                <dt>Status</dt>
-                <dd>{analysisResult.status}</dd>
-              </dl>
-            </details>
           </>
+        )}
+
+        {artifactFiles.length > 0 && (
+          <MetadataPanel
+            artifactFiles={artifactFiles}
+            analysisResult={analysisResult}
+            isRunning={isRunning}
+          />
         )}
       </div>
     </main>

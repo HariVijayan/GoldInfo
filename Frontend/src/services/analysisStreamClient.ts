@@ -1,5 +1,5 @@
 import { ANALYSIS_STREAM_URL, DEFAULT_ANALYSIS_GOAL } from "../config/analysisConfig";
-import type { AgentEvent, AgentResult } from "../types/analysisTypes";
+import type { AgentEvent, AgentResult, ArtifactFile } from "../types/analysisTypes";
 
 type ParsedServerEvent = { eventName: string; payload: unknown };
 
@@ -39,7 +39,10 @@ function validateFinalResult(finalResult: AgentResult): AgentResult {
 
 export async function streamGoldAnalysis(
   periodValue: string,
-  onStatusEvent: (agentEvent: AgentEvent) => void,
+  streamHandlers: {
+    onStatusEvent: (agentEvent: AgentEvent) => void;
+    onArtifactFile: (artifactFile: ArtifactFile) => void;
+  },
   abortSignal: AbortSignal
 ): Promise<AgentResult> {
   const response = await fetch(ANALYSIS_STREAM_URL, {
@@ -74,7 +77,9 @@ export async function streamGoldAnalysis(
       if (!parsedEvent) continue;
 
       if (parsedEvent.eventName === "status") {
-        onStatusEvent(parsedEvent.payload as AgentEvent);
+        streamHandlers.onStatusEvent(parsedEvent.payload as AgentEvent);
+      } else if (parsedEvent.eventName === "artifact") {
+        streamHandlers.onArtifactFile(parsedEvent.payload as ArtifactFile);
       } else if (parsedEvent.eventName === "final") {
         finalResult = validateFinalResult(parsedEvent.payload as AgentResult);
       } else if (parsedEvent.eventName === "error") {
