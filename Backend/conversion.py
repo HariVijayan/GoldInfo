@@ -351,19 +351,24 @@ def convert_gold_history(
     }
 
 if __name__ == "__main__":
+    import argparse
+
     from market_data import get_gold_history, get_usd_inr_history
 
-    PERIOD = "1y"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--period", required=True)
+    args = parser.parse_args()
+    period = args.period
 
     print("Retrieving source data...")
-    gold_history = get_gold_history(period=PERIOD)
-    usd_inr_history = get_usd_inr_history(period=PERIOD)
+    gold_history = get_gold_history(period=period)
+    usd_inr_history = get_usd_inr_history(period=period)
 
     print("Converting and aligning data...")
     converted = convert_gold_history(
         gold_history=gold_history,
         usd_inr_history=usd_inr_history,
-        requested_period=PERIOD,
+        requested_period=period,
     )
 
     gold_usd = converted["gold_usd_per_ounce"]
@@ -372,7 +377,7 @@ if __name__ == "__main__":
     gold_inr_g = converted["gold_inr_per_gram"]
 
     print("\n=== CONVERSION SUMMARY ===")
-    print(f"Requested period: {PERIOD}")
+    print(f"Requested period: {period}")
     print(f"Gold source observations: {len(gold_usd)}")
     print(f"USD/INR source observations: {len(usd_inr)}")
     print(f"Aligned observations: {len(gold_inr_oz)}")

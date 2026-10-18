@@ -40,7 +40,7 @@ class AnalysisRequest(BaseModel):
         max_length=2000,
     )
 
-    period: str = Field(default="1y")
+    period: str = Field(min_length=1)
 
 
 class AnalysisResponse(BaseModel):

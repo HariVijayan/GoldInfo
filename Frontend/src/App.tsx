@@ -1,384 +1,181 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
-
-type AgentEvent = {
-  type: string;
-  message: string;
-  timestamp?: string;
-};
-
-type AnalysisState = "idle" | "running" | "success" | "error";
-
-type AnalysisMetrics = {
-  unit: string;
-  latest_price: number;
-  latest_date: string;
-  previous_price: number | null;
-  previous_date: string | null;
-  one_session_change_pct: number | null;
-  seven_day_change_pct: number | null;
-  thirty_day_change_pct: number | null;
-  historical_high: number;
-  historical_high_date: string;
-  historical_low: number;
-  historical_low_date: string;
-  range_position_pct: number | null;
-  distance_below_high_pct: number | null;
-  observation_count: number;
-  period_start: string;
-  period_end: string;
-};
-
-type AgentResult = {
-  run_id: string;
-  request: {
-    goal: string;
-    period: string;
-    [key: string]: unknown;
-  };
-  analysis: AnalysisMetrics;
-  interpretation: string;
-  processed_data: Record<string, unknown>;
-  status: "success" | "error";
-};
-
-const PERIOD_OPTIONS = [
-  { label: "1 Month", value: "1mo" },
-  { label: "3 Months", value: "3mo" },
-  { label: "6 Months", value: "6mo" },
-  { label: "1 Year", value: "1y" },
-  { label: "2 Years", value: "2y" },
-  { label: "5 Years", value: "5y" },
-  { label: "10 Years", value: "10y" },
-];
-
-const DEFAULT_GOAL =
-  "Analyze historical gold prices and describe the observed movement.";
-
-function formatPrice(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) {
-    return "N/A";
-  }
-
-  return value.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function formatPercent(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) {
-    return "N/A";
-  }
-
-  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
-}
-
-function formatDate(value: string | null | undefined): string {
-  return value || "N/A";
-}
+import { MetricCard } from "./components/MetricCard";
+import { ProgressTimeline } from "./components/ProgressTimeline";
+import { RangeGauge } from "./components/RangeGauge";
+import { DEFAULT_PERIOD_VALUE, PERIOD_OPTIONS } from "./config/analysisConfig";
+import { streamGoldAnalysis } from "./services/analysisStreamClient";
+import type { AgentEvent, AgentResult, AnalysisState } from "./types/analysisTypes";
+import { formatDate, formatPercent, formatPrice, getChangeTone } from "./utils/formatters";
 
 function App() {
-  const [period, setPeriod] = useState("1y");
-  const [status, setStatus] = useState<AnalysisState>("idle");
-  const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [result, setResult] = useState<AgentResult | null>(null);
-  const [error, setError] = useState("");
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(DEFAULT_PERIOD_VALUE);
+  const [analysisState, setAnalysisState] = useState<AnalysisState>("idle");
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const [analysisResult, setAnalysisResult] = useState<AgentResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
+  const activeRequestController = useRef<AbortController | null>(null);
+
+  useEffect(() => () => activeRequestController.current?.abort(), []);
 
   const runAnalysis = async () => {
-    setStatus("running");
-    setEvents([]);
-    setResult(null);
-    setError("");
+    activeRequestController.current?.abort();
+    const requestController = new AbortController();
+    activeRequestController.current = requestController;
+
+    setAnalysisState("running");
+    setAgentEvents([]);
+    setAnalysisResult(null);
+    setErrorMessage("");
 
     try {
-      const response = await fetch(
-        "http://127.0.0.1:8000/api/analyze/stream",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            goal: DEFAULT_GOAL,
-            period,
-          }),
-        }
+      const finalResult = await streamGoldAnalysis(
+        selectedPeriod,
+        (agentEvent) => setAgentEvents((currentEvents) => [...currentEvents, agentEvent]),
+        requestController.signal
       );
-
-      if (!response.ok) {
-        throw new Error(`Server returned HTTP ${response.status}.`);
-      }
-
-      if (!response.body) {
-        throw new Error("Streaming response body is unavailable.");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-
-        const messages = buffer.split("\n\n");
-        buffer = messages.pop() ?? "";
-
-        for (const message of messages) {
-          const lines = message.split("\n");
-
-          let eventName = "";
-          const dataLines: string[] = [];
-
-          for (const line of lines) {
-            if (line.startsWith("event:")) {
-              eventName = line.slice(6).trim();
-            } else if (line.startsWith("data:")) {
-              dataLines.push(line.slice(5).trimStart());
-            }
-          }
-
-          if (!eventName || dataLines.length === 0) {
-            continue;
-          }
-
-          const payloadText = dataLines.join("\n");
-
-          if (!payloadText) {
-            continue;
-          }
-
-          const payload = JSON.parse(payloadText);
-
-          if (eventName === "status") {
-            setEvents((current) => [...current, payload as AgentEvent]);
-          }
-
-          if (eventName === "final") {
-            const agentResult = payload as AgentResult;
-
-            if (agentResult.status === "error") {
-              throw new Error(
-                agentResult.interpretation || "Analysis failed."
-              );
-            }
-
-            if (!agentResult.analysis) {
-              throw new Error(
-                "The server response did not contain analysis metrics."
-              );
-            }
-
-            setResult(agentResult);
-            setStatus("success");
-          }
-
-          if (eventName === "error") {
-            throw new Error(payload.message ?? "Analysis failed.");
-          }
-        }
-      }
-
-      if (status !== "error") {
-        // If the stream ends without a final result, report the incomplete response.
-        // The local variable avoids relying on asynchronous React state updates.
-      }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred."
+      setAnalysisResult(finalResult);
+      setAnalysisState("success");
+    } catch (caughtError) {
+      if (requestController.signal.aborted) return;
+      setErrorMessage(
+        caughtError instanceof Error ? caughtError.message : "An unexpected error occurred."
       );
-      setStatus("error");
-    } finally {
-      // A successful final event sets status to success.
-      // If the stream ended without a final event, detect it below.
+      setAnalysisState("error");
     }
-
   };
 
-  const isRunning = status === "running";
-  const metrics = result?.analysis;
+  const isRunning = analysisState === "running";
+  const metrics = analysisResult?.analysis;
+  const selectedPeriodLabel =
+    PERIOD_OPTIONS.find((option) => option.value === analysisResult?.request.period)?.label ??
+    analysisResult?.request.period;
+  const interpretationParagraphs =
+    analysisResult?.interpretation.split(/\n{2,}/).filter(Boolean) ?? [];
 
-  return (<main className="app"> <section className="container"> <header className="header"> <div> <p className="eyebrow">LOCAL AI AGENT</p> <h1>GoldInfo</h1> <p className="subtitle">
-    Historical gold price analysis powered by local data and Ollama. </p> </div> </header>
+  return (
+    <main className="app">
+      <div className="container">
+        <header className="page-header">
+          <h1>GoldInfo</h1>
+          <p>Historical gold price analysis, run locally with Ollama.</p>
+        </header>
 
-    <section className="card">
-      <label htmlFor="period">Historical period</label>
-
-      <select
-        id="period"
-        value={period}
-        onChange={(event) => setPeriod(event.target.value)}
-        disabled={isRunning}
-      >
-        {PERIOD_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-
-      <button
-        type="button"
-        onClick={runAnalysis}
-        disabled={isRunning}
-      >
-        {isRunning ? "Analyzing..." : "Analyze Gold"}
-      </button>
-    </section>
-
-    {events.length > 0 && (
-      <section className="card">
-        <div className="section-heading">
-          <h2>Agent progress</h2>
-
-          {isRunning && (
-            <span className="running-indicator">Running</span>
-          )}
-        </div>
-
-        <div className="events">
-          {events.map((event, index) => (
-            <div
-              className="event"
-              key={`${event.timestamp ?? "event"}-${index}`}
-            >
-              <span className="event-type">{event.type}</span>
-              <span className="event-message">{event.message}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-    )}
-
-    {status === "error" && (
-      <section className="card error-card">
-        <h2>Analysis failed</h2>
-        <p>{error}</p>
-      </section>
-    )}
-
-    {status === "success" && result && metrics && (
-      <>
-        <section className="card">
-          <div className="section-heading">
-            <h2>Historical Summary</h2>
-            <span className="success-indicator">Complete</span>
+        <section className="panel controls" aria-label="Analysis settings">
+          <div role="radiogroup" aria-label="Historical period" className="period-picker">
+            {PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={selectedPeriod === option.value}
+                className="period-option"
+                onClick={() => setSelectedPeriod(option.value)}
+                disabled={isRunning}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
 
-          <p>
-            <strong>Selected period:</strong>{" "}
-            {PERIOD_OPTIONS.find(
-              (option) => option.value === result.request.period
-            )?.label ?? result.request.period}
-          </p>
-
-          <p>
-            <strong>Actual data coverage:</strong>{" "}
-            {formatDate(metrics.period_start)} –{" "}
-            {formatDate(metrics.period_end)}
-          </p>
-
-          <p>
-            <strong>Observations:</strong>{" "}
-            {metrics.observation_count}
-          </p>
-
-          <div className="metrics-grid">
-            <article className="metric-card">
-              <h3>Latest Price</h3>
-              <p>
-                {formatPrice(metrics.latest_price)} {metrics.unit}
-              </p>
-              <small>{formatDate(metrics.latest_date)}</small>
-            </article>
-
-            <article className="metric-card">
-              <h3>Previous Price</h3>
-              <p>
-                {formatPrice(metrics.previous_price)} {metrics.unit}
-              </p>
-              <small>{formatDate(metrics.previous_date)}</small>
-            </article>
-
-            <article className="metric-card">
-              <h3>1-Session Change</h3>
-              <p>{formatPercent(metrics.one_session_change_pct)}</p>
-            </article>
-
-            <article className="metric-card">
-              <h3>7-Day Change</h3>
-              <p>{formatPercent(metrics.seven_day_change_pct)}</p>
-            </article>
-
-            <article className="metric-card">
-              <h3>30-Day Change</h3>
-              <p>{formatPercent(metrics.thirty_day_change_pct)}</p>
-            </article>
-
-            <article className="metric-card">
-              <h3>Historical High</h3>
-              <p>
-                {formatPrice(metrics.historical_high)} {metrics.unit}
-              </p>
-              <small>
-                {formatDate(metrics.historical_high_date)}
-              </small>
-            </article>
-
-            <article className="metric-card">
-              <h3>Historical Low</h3>
-              <p>
-                {formatPrice(metrics.historical_low)} {metrics.unit}
-              </p>
-              <small>
-                {formatDate(metrics.historical_low_date)}
-              </small>
-            </article>
-
-            <article className="metric-card">
-              <h3>Position in Historical Range</h3>
-              <p>{formatPercent(metrics.range_position_pct)}</p>
-            </article>
-
-            <article className="metric-card">
-              <h3>Below Historical High</h3>
-              <p>{formatPercent(metrics.distance_below_high_pct)}</p>
-            </article>
-          </div>
+          <button type="button" className="primary-button" onClick={runAnalysis} disabled={isRunning}>
+            {isRunning ? "Analyzing…" : "Analyze gold"}
+          </button>
         </section>
 
-        <section className="card">
-          <div className="section-heading">
-            <h2>Analysis</h2>
-            <span className="success-indicator">Complete</span>
-          </div>
+        {analysisState === "idle" && (
+          <section className="panel empty-state">
+            <h2>No analysis yet</h2>
+            <p>Choose a period above and select Analyze gold to see price movement and a written summary.</p>
+          </section>
+        )}
 
-          <div className="analysis">{result.interpretation}</div>
-        </section>
+        <ProgressTimeline agentEvents={agentEvents} isRunning={isRunning} />
 
-        <section className="card">
-          <h2>Run Details</h2>
-          <p>
-            <strong>Run ID:</strong> {result.run_id}
-          </p>
-          <p>
-            <strong>Status:</strong> {result.status}
-          </p>
-        </section>
-      </>
-    )}
-  </section>
-  </main>
+        {analysisState === "error" && (
+          <section className="panel error-panel" role="alert">
+            <h2>Analysis failed</h2>
+            <p>{errorMessage}</p>
+            <button type="button" className="secondary-button" onClick={runAnalysis}>
+              Try again
+            </button>
+          </section>
+        )}
 
+        {analysisState === "success" && analysisResult && metrics && (
+          <>
+            <section className="panel hero-panel">
+              <p className="hero-label">Latest price, {formatDate(metrics.latest_date)}</p>
+              <p className="hero-price">
+                {formatPrice(metrics.latest_price)} <span className="hero-unit">{metrics.unit}</span>
+              </p>
+              <p className="hero-coverage">
+                {selectedPeriodLabel} selected. Data covers {formatDate(metrics.period_start)} to{" "}
+                {formatDate(metrics.period_end)} across {metrics.observation_count} observations.
+              </p>
+
+              <RangeGauge
+                unit={metrics.unit}
+                historicalLow={metrics.historical_low}
+                historicalLowDate={metrics.historical_low_date}
+                historicalHigh={metrics.historical_high}
+                historicalHighDate={metrics.historical_high_date}
+                rangePositionPercent={metrics.range_position_pct}
+              />
+            </section>
+
+            <section className="metrics-grid" aria-label="Key metrics">
+              <MetricCard
+                metricTitle="1-session change"
+                metricValue={formatPercent(metrics.one_session_change_pct)}
+                changeTone={getChangeTone(metrics.one_session_change_pct)}
+              />
+              <MetricCard
+                metricTitle="7-day change"
+                metricValue={formatPercent(metrics.seven_day_change_pct)}
+                changeTone={getChangeTone(metrics.seven_day_change_pct)}
+              />
+              <MetricCard
+                metricTitle="30-day change"
+                metricValue={formatPercent(metrics.thirty_day_change_pct)}
+                changeTone={getChangeTone(metrics.thirty_day_change_pct)}
+              />
+              <MetricCard
+                metricTitle="Previous price"
+                metricValue={`${formatPrice(metrics.previous_price)} ${metrics.unit}`}
+                metricCaption={formatDate(metrics.previous_date)}
+              />
+              <MetricCard
+                metricTitle="Below historical high"
+                metricValue={formatPercent(metrics.distance_below_high_pct)}
+              />
+            </section>
+
+            <section className="panel">
+              <div className="section-heading">
+                <h2>Analysis</h2>
+                <span className="badge badge-success">Complete</span>
+              </div>
+              <div className="analysis-text">
+                {interpretationParagraphs.map((paragraphText, paragraphIndex) => (
+                  <p key={paragraphIndex}>{paragraphText}</p>
+                ))}
+              </div>
+            </section>
+
+            <details className="panel run-details">
+              <summary>Run details</summary>
+              <dl>
+                <dt>Run ID</dt>
+                <dd>{analysisResult.run_id}</dd>
+                <dt>Status</dt>
+                <dd>{analysisResult.status}</dd>
+              </dl>
+            </details>
+          </>
+        )}
+      </div>
+    </main>
   );
 }
 

@@ -103,6 +103,8 @@ class AgentLogger:
 
 @dataclass
 class AgentState:
+    period: str
+
     # Run identity
     run_id: str = field(
         default_factory=lambda: uuid.uuid4().hex
@@ -116,7 +118,6 @@ class AgentState:
     goal: str = ""
 
     # Explicit request parameters
-    period: str = "1y"
     gold_ticker: str = "GC=F"
     fx_ticker: str = "INR=X"
     interval: str = "1d"
@@ -210,15 +211,7 @@ TOOLS = [
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "period": {
-                        "type": "string",
-                        "description": (
-                            "Yahoo Finance period such as '1y', '6mo', "
-                            "'3mo', '5y', or '10y'. Defaults to '1y'."
-                        ),
-                    }
-                },
+                "properties": {},
                 "required": [],
             },
         },
@@ -314,21 +307,7 @@ def execute_tool(
     # The model does not need to reason about the FX dependency.
     # -----------------------------------------------------------------------
     if tool_name == "get_gold_history":
-        period = arguments.get("period", "1y")
-
-        if not isinstance(period, str):
-            raise ToolExecutionError(
-                "get_gold_history failed because 'period' must be a string."
-            )
-
-        period = period.strip()
-
-        if not period:
-            raise ToolExecutionError(
-                "get_gold_history failed because 'period' cannot be empty."
-            )
-
-        state.period = period
+        period = state.period
 
         emit(
             create_event(
@@ -591,7 +570,7 @@ def run_required_tool_step(
 
 def run_agent(
     goal: str,
-    period: str = "1y",
+    period: str,
     event_handler: EventHandler | None = None,
 ) -> str:
     logger = AgentLogger()
@@ -619,7 +598,10 @@ def run_agent(
         },
         {
             "role": "user",
-            "content": goal,
+            "content": (
+                f"{goal}\n\n"
+                f"Requested historical data period: {period}."
+            ),
         },
     ]
 
@@ -991,8 +973,14 @@ def run_agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--period", required=True)
+    args = parser.parse_args()
+
     goal = """
-Analyze approximately one year of historical gold prices.
+Analyze historical gold prices.
 Retrieve the historical market data, convert the available data into INR
 per gram, calculate the descriptive historical statistics, and provide a
 concise factual interpretation of the observed historical movement.
@@ -1001,7 +989,7 @@ recommendations.
 """.strip()
 
     try:
-        result = run_agent(goal)
+        result = run_agent(goal, period=args.period)
         print("\n=== FINAL ANALYSIS ===")
         print(result)
     except AgentError as exc:

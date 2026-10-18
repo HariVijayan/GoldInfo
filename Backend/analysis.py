@@ -245,20 +245,25 @@ def analyze_gold_history(
 
 
 if __name__ == "__main__":
+    import argparse
+
     from conversion import convert_gold_history
     from market_data import get_gold_history, get_usd_inr_history
 
-    PERIOD = "1y"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--period", required=True)
+    args = parser.parse_args()
+    period = args.period
 
     print("Retrieving source data...")
-    gold_history = get_gold_history(period=PERIOD)
-    usd_inr_history = get_usd_inr_history(period=PERIOD)
+    gold_history = get_gold_history(period=period)
+    usd_inr_history = get_usd_inr_history(period=period)
 
     print("Converting and aligning data...")
     converted = convert_gold_history(
         gold_history=gold_history,
         usd_inr_history=usd_inr_history,
-        requested_period=PERIOD,
+        requested_period=period,
     )
 
     print("Analyzing INR-per-gram data...")
