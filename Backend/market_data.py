@@ -34,6 +34,7 @@ def _download_close_observations(
     ticker: str,
     period: str,
     instrument_name: str,
+    interval: str = "1d",
 ) -> list[MarketObservation]:
     """
     Download and normalize daily closing-price observations.
@@ -46,7 +47,7 @@ def _download_close_observations(
         data = yf.download(
             ticker,
             period=period,
-            interval="1d",
+            interval=interval,
             auto_adjust=False,
             progress=False,
         )
@@ -113,59 +114,40 @@ def _download_close_observations(
     return observations
 
 
-def get_gold_history(period: str = "1y") -> GoldHistory:
-    """
-    Retrieve daily gold futures closing prices in USD per troy ounce.
-
-    Ticker:
-        GC=F
-
-    Returns:
-        Historical observations and source metadata.
-
-    Raises:
-        RuntimeError: If the provider fails or returns no usable data.
-    """
-
+def get_gold_history(
+    period: str = "1y",
+    ticker: str = GOLD_TICKER,
+    interval: str = "1d",
+) -> GoldHistory:
     observations = _download_close_observations(
-        ticker=GOLD_TICKER,
+        ticker=ticker,
         period=period,
         instrument_name="gold futures",
+        interval=interval,
     )
 
     return {
-        "ticker": GOLD_TICKER,
+        "ticker": ticker,
         "source": SOURCE,
         "observations": observations,
         "latest_observation_date": observations[-1]["date"],
     }
 
 
-def get_usd_inr_history(period: str = "1y") -> UsdInrHistory:
-    """
-    Retrieve daily USD/INR exchange-rate observations.
-
-    Ticker:
-        INR=X
-
-    Verify the quote convention before using this dataset in calculations.
-    The expected convention is INR per 1 USD.
-
-    Returns:
-        Historical exchange-rate observations and source metadata.
-
-    Raises:
-        RuntimeError: If the provider fails or returns no usable data.
-    """
-
+def get_usd_inr_history(
+    period: str = "1y",
+    ticker: str = USD_INR_TICKER,
+    interval: str = "1d",
+) -> UsdInrHistory:
     observations = _download_close_observations(
-        ticker=USD_INR_TICKER,
+        ticker=ticker,
         period=period,
         instrument_name="USD/INR exchange-rate",
+        interval=interval,
     )
 
     return {
-        "ticker": USD_INR_TICKER,
+        "ticker": ticker,
         "source": SOURCE,
         "observations": observations,
         "latest_observation_date": observations[-1]["date"],

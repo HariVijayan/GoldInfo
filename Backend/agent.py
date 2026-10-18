@@ -1,5 +1,4 @@
 import json
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
@@ -8,6 +7,9 @@ import ollama
 from market_data import get_gold_history, get_usd_inr_history
 from conversion import convert_gold_history
 from analysis import analyze_gold_history
+
+from dataclasses import dataclass, field
+import uuid
 
 MODEL = "qwen2.5:1.5b"
 MAX_ITERATIONS = 5
@@ -61,6 +63,19 @@ def create_event(event_type: str, message: str) -> AgentEvent:
         timestamp=datetime.now().isoformat(timespec="seconds"),
     )
 
+# ---------------------------------------------------------------------------
+# Agent result
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AgentResult:
+    run_id: str
+    request: dict[str, Any]
+    analysis: dict[str, Any]
+    interpretation: str
+    processed_data: dict[str, Any]
+    status: str
+
 
 # ---------------------------------------------------------------------------
 # CLI event handler
@@ -86,13 +101,41 @@ class AgentLogger:
 # Agent state
 # ---------------------------------------------------------------------------
 
+@dataclass
 class AgentState:
-    def __init__(self) -> None:
-        self.period: str = "1y"
-        self.history: dict[str, Any] | None = None
-        self.usd_inr_history: dict[str, Any] | None = None
-        self.converted_data: dict[str, Any] | None = None
-        self.analysis: dict[str, Any] | None = None
+    # Run identity
+    run_id: str = field(
+        default_factory=lambda: uuid.uuid4().hex
+    )
+
+    created_at: str = field(
+        default_factory=lambda: datetime.now().isoformat()
+    )
+
+    # Original user request
+    goal: str = ""
+
+    # Explicit request parameters
+    period: str = "1y"
+    gold_ticker: str = "GC=F"
+    fx_ticker: str = "INR=X"
+    interval: str = "1d"
+
+    # Processing configuration
+    target_currency: str = "INR"
+    target_unit: str = "gram"
+
+    # Pipeline outputs
+    history: dict[str, Any] | None = None
+    usd_inr_history: dict[str, Any] | None = None
+    converted_data: dict[str, Any] | None = None
+    analysis: dict[str, Any] | None = None
+    interpretation: str | None = None
+
+    # Lifecycle tracking
+    status: str = "initialized"
+    current_stage: str = "request_received"
+    error: str | None = None
 
     @property
     def history_available(self) -> bool:
@@ -109,6 +152,17 @@ class AgentState:
     @property
     def analysis_available(self) -> bool:
         return self.analysis is not None
+
+    def request_parameters(self) -> dict[str, Any]:
+        return {
+            "goal": self.goal,
+            "period": self.period,
+            "gold_ticker": self.gold_ticker,
+            "fx_ticker": self.fx_ticker,
+            "interval": self.interval,
+            "target_currency": self.target_currency,
+            "target_unit": self.target_unit,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +338,11 @@ def execute_tool(
         )
 
         try:
-            history = get_gold_history(period=period)
+            history = get_gold_history(
+                period=state.period,
+                ticker=state.gold_ticker,
+                interval=state.interval,
+            )
         except Exception as exc:
             raise ToolExecutionError(
                 "get_gold_history failed while retrieving gold "
@@ -327,7 +385,11 @@ def execute_tool(
         )
 
         try:
-            usd_inr_history = get_usd_inr_history(period=period)
+            usd_inr_history = get_usd_inr_history(
+                period=state.period,
+                ticker=state.fx_ticker,
+                interval=state.interval,
+            )
         except Exception as exc:
             raise ToolExecutionError(
                 "USD/INR retrieval failed while preparing the "
@@ -414,7 +476,7 @@ def execute_tool(
             converted_data = convert_gold_history(
                 state.history,
                 state.usd_inr_history,
-                "1y",
+                requested_period=state.period,
             )
         except Exception as exc:
             raise ToolExecutionError(
@@ -529,6 +591,7 @@ def run_required_tool_step(
 
 def run_agent(
     goal: str,
+    period: str = "1y",
     event_handler: EventHandler | None = None,
 ) -> str:
     logger = AgentLogger()
@@ -537,7 +600,10 @@ def run_agent(
         event_handler = logger.handle
 
     emit = event_handler
-    state = AgentState()
+    state = AgentState(
+        goal=goal,
+        period=period,
+    )
 
     emit(
         create_event(
@@ -910,7 +976,14 @@ def run_agent(
         )
     )
 
-    return final_content
+    return AgentResult(
+        run_id=state.run_id,
+        request=state.request_parameters(),
+        analysis=state.analysis,
+        interpretation=final_content,
+        processed_data=state.converted_data,
+        status="success",
+    )
 
 
 # ---------------------------------------------------------------------------

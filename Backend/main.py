@@ -3,9 +3,10 @@ import json
 from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent import AgentError, AgentEvent, run_agent
 
@@ -30,7 +31,16 @@ app.add_middleware(
 
 
 class AnalysisRequest(BaseModel):
-    goal: str
+    goal: str = Field(
+        default=(
+            "Analyze historical gold prices and describe "
+            "the observed movement."
+        ),
+        min_length=1,
+        max_length=2000,
+    )
+
+    period: str = Field(default="1y")
 
 
 class AnalysisResponse(BaseModel):
@@ -50,7 +60,10 @@ def health_check() -> HealthResponse:
 @app.post("/api/analyze", response_model=AnalysisResponse)
 def analyze(request: AnalysisRequest) -> AnalysisResponse:
     try:
-        result = run_agent(request.goal)
+        result = run_agent(
+            goal=request.goal,
+            period=request.period,
+        )
 
         return AnalysisResponse(
             status="success",
@@ -67,12 +80,13 @@ def analyze(request: AnalysisRequest) -> AnalysisResponse:
 def format_sse(event_name: str, data: dict) -> str:
     return (
         f"event: {event_name}\n"
-        f"data: {json.dumps(data)}\n\n"
+        f"data: {json.dumps(jsonable_encoder(data))}\n\n"
     )
 
 
 async def analysis_stream(
     goal: str,
+    period: str,
 ) -> AsyncGenerator[str, None]:
 
     queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
@@ -84,6 +98,7 @@ async def analysis_stream(
         asyncio.to_thread(
             run_agent,
             goal,
+            period,
             handle_event,
         )
     )
@@ -137,10 +152,7 @@ async def analysis_stream(
                 else:
                     yield format_sse(
                         "final",
-                        {
-                            "status": "success",
-                            "analysis": result,
-                        },
+                        result,
                     )
 
                 break
@@ -156,9 +168,11 @@ async def analysis_stream(
 async def analyze_stream(
     request: AnalysisRequest,
 ) -> StreamingResponse:
-
     return StreamingResponse(
-        analysis_stream(request.goal),
+        analysis_stream(
+            request.goal,
+            request.period,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
