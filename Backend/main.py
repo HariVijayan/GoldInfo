@@ -1,7 +1,8 @@
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
@@ -10,12 +11,24 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent import AgentError, AgentEvent, run_agent
+from forecast_service import (
+    DEFAULT_FORECAST_FREQUENCY,
+    DEFAULT_FORECAST_HORIZON_WEEKS,
+    MAXIMUM_FORECAST_HORIZON_WEEKS,
+    ForecastError,
+    run_forecast,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 app = FastAPI(
     title="GoldInfo API",
     description="Local gold price analysis agent API",
-    version="0.2.0",
+    version="0.4.0",
 )
 
 
@@ -42,6 +55,15 @@ class AnalysisRequest(BaseModel):
     )
 
     period: str = Field(min_length=1)
+
+
+class ForecastRequest(BaseModel):
+    horizon_weeks: int = Field(
+        default=DEFAULT_FORECAST_HORIZON_WEEKS,
+        ge=1,
+        le=MAXIMUM_FORECAST_HORIZON_WEEKS,
+    )
+    frequency: Literal["daily", "weekly"] = DEFAULT_FORECAST_FREQUENCY
 
 
 class HealthResponse(BaseModel):
@@ -79,6 +101,30 @@ def analyze(request: AnalysisRequest) -> JSONResponse:
                     "metadata": extract_run_metadata(exc),
                 }
             )
+        )
+
+    return JSONResponse(content=jsonable_encoder(result))
+
+
+@app.post("/api/forecast")
+def forecast(request: ForecastRequest | None = None) -> JSONResponse:
+    forecast_request = request or ForecastRequest()
+
+    try:
+        result = run_forecast(
+            horizon_weeks=forecast_request.horizon_weeks,
+            frequency=forecast_request.frequency,
+        )
+    except ForecastError as exc:
+        return JSONResponse(
+            status_code=exc.http_status_code,
+            content=jsonable_encoder(
+                {
+                    "status": "error",
+                    "message": str(exc),
+                    "metadata": extract_run_metadata(exc),
+                }
+            ),
         )
 
     return JSONResponse(content=jsonable_encoder(result))

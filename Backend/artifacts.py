@@ -289,3 +289,155 @@ def build_run_metadata(
         "file_count": len(ordered_files),
         "files": ordered_files,
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Forecast artifacts
+# ---------------------------------------------------------------------------
+
+FILENAME_FORECAST_REPORT = "forecast_report.txt"
+
+ARTIFACT_FILENAME_ORDER += [
+    "forecast_training_weekly.csv",
+    "forecast_weekly.csv",
+    "forecast_training_daily.csv",
+    "forecast_daily.csv",
+    FILENAME_FORECAST_REPORT,
+]
+
+
+def build_forecast_training_artifact(
+    training_rows: list[dict[str, Any]],
+    series_keys: tuple[str, ...],
+    frequency: str,
+) -> ArtifactFile:
+    return _build_csv_artifact(
+        filename=f"forecast_training_{frequency}.csv",
+        description=(
+            f"The {frequency} series the models were trained on "
+            "(aligned gold and USD/INR observations)."
+        ),
+        column_names=["date", *series_keys],
+        rows=training_rows,
+    )
+
+
+def build_forecast_points_artifact(
+    forecast_points: list[Mapping[str, Any]],
+    series_keys: tuple[str, ...],
+    interval_level: float,
+    frequency: str,
+) -> ArtifactFile:
+    column_names = ["step", "date"]
+    for series_key in series_keys:
+        column_names += [series_key, f"{series_key}_lower", f"{series_key}_upper"]
+
+    rows: list[dict[str, Any]] = []
+    for forecast_point in forecast_points:
+        row: dict[str, Any] = {
+            "step": forecast_point["step"],
+            "date": forecast_point["date"],
+        }
+        for series_key in series_keys:
+            bounds = forecast_point["bounds"][series_key]
+            row[series_key] = forecast_point[series_key]
+            row[f"{series_key}_lower"] = bounds["lower"]
+            row[f"{series_key}_upper"] = bounds["upper"]
+        rows.append(row)
+
+    return _build_csv_artifact(
+        filename=f"forecast_{frequency}.csv",
+        description=(
+            f"{frequency.capitalize()} forecast with a lower and upper bound "
+            f"per series ({int(interval_level * 100)} percent interval)."
+        ),
+        column_names=column_names,
+        rows=rows,
+    )
+
+
+def _append_mapping_lines(
+    lines: list[str], values: Mapping[str, Any], indent: str = ""
+) -> None:
+    for name, value in values.items():
+        if isinstance(value, Mapping):
+            lines.append(f"{indent}{name}:")
+            _append_mapping_lines(lines, value, indent + "  ")
+        else:
+            lines.append(f"{indent}{name}: {_format_report_value(value)}")
+
+
+def build_forecast_report_artifact(
+    *,
+    run_id: str,
+    request_parameters: Mapping[str, Any],
+    data_summary: Mapping[str, Any],
+    end_of_horizon: Mapping[str, Mapping[str, Any]],
+    model_details: Mapping[str, Any],
+    warnings: list[str],
+) -> ArtifactFile:
+    lines: list[str] = [
+        "GOLDINFO FORECAST REPORT",
+        "========================",
+        f"Run ID: {run_id}",
+        f"Report generated: {datetime.now().isoformat(timespec='seconds')}",
+        "",
+        "REQUEST",
+        "-------",
+    ]
+    _append_mapping_lines(lines, request_parameters)
+
+    lines += ["", "DATA USED", "---------"]
+    _append_mapping_lines(lines, data_summary)
+
+    lines += ["", "FORECAST AT END OF HORIZON", "--------------------------"]
+    _append_mapping_lines(lines, end_of_horizon)
+
+    lines += [
+        "",
+        "METHOD",
+        "------",
+        f"approach: {model_details['approach']}",
+        f"pipeline: {', '.join(model_details['pipeline'])}",
+        f"target: {model_details['target']}",
+        f"features: {', '.join(model_details['features'])}",
+        f"interval_method: {model_details['interval_method']}",
+    ]
+    _append_mapping_lines(lines, model_details["series"])
+
+    lines += ["", "WALK-FORWARD BACKTEST", "---------------------"]
+    backtest = model_details.get("backtest")
+    if backtest is None:
+        lines.append("Backtest was not available for this run.")
+    else:
+        lines.append(
+            f"Origins: {backtest['origin_count']} (every "
+            f"{backtest['step_periods']} {backtest['period_unit']}). "
+            "Lower error is better. Naive = no change from the origin "
+            "price. Origins overlap, so treat results as indicative."
+        )
+        for series_name, horizon_results in backtest["results"].items():
+            lines.append(series_name)
+            for result in horizon_results:
+                lines.append(
+                    f"  {result['horizon_label']:>9}: model MAPE "
+                    f"{result['model_mape_pct']:.2f}%, naive MAPE "
+                    f"{result['naive_mape_pct']:.2f}%, model beats naive: "
+                    f"{result['model_beats_naive']}"
+                )
+
+    lines += ["", "WARNINGS AND CAVEATS", "--------------------"]
+    lines += [f"- {warning}" for warning in warnings]
+    lines.append("")
+
+    return {
+        "filename": FILENAME_FORECAST_REPORT,
+        "media_type": TEXT_MEDIA_TYPE,
+        "description": (
+            "Method, data coverage, end-of-horizon forecast, backtest "
+            "accuracy against a no-change baseline, and caveats."
+        ),
+        "row_count": None,
+        "content": "\n".join(lines),
+    }
