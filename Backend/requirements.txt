@@ -3,4 +3,6 @@ uvicorn
 yfinance
 ollama
 pandas
+numpy
+scikit-learn
 requests

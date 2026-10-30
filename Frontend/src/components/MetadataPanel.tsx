@@ -1,18 +1,20 @@
-import { useState } from "react";
-import type { AgentResult, ArtifactFile } from "../types/analysisTypes";
+import { Fragment, useState } from "react";
+import type { ArtifactFile } from "../types/analysisTypes";
 import { downloadArtifactFile, formatFileSize } from "../utils/artifactFiles";
 
 type DetailsTab = "metadata" | "run-details";
 
+export type RunDetailItem = { label: string; value: string };
+
 type MetadataPanelProps = {
   artifactFiles: ArtifactFile[];
-  analysisResult: AgentResult | null;
+  runDetails: RunDetailItem[] | null;
   isRunning: boolean;
 };
 
-export function MetadataPanel({ artifactFiles, analysisResult, isRunning }: MetadataPanelProps) {
+export function MetadataPanel({ artifactFiles, runDetails, isRunning }: MetadataPanelProps) {
   const [activeTab, setActiveTab] = useState<DetailsTab>("metadata");
-  const visibleTab: DetailsTab = analysisResult ? activeTab : "metadata";
+  const visibleTab: DetailsTab = runDetails ? activeTab : "metadata";
 
   return (
     <section className="panel" aria-label="Run metadata">
@@ -28,7 +30,7 @@ export function MetadataPanel({ artifactFiles, analysisResult, isRunning }: Meta
         >
           Metadata ({artifactFiles.length})
         </button>
-        {analysisResult && (
+        {runDetails && (
           <button
             type="button"
             role="tab"
@@ -75,13 +77,15 @@ export function MetadataPanel({ artifactFiles, analysisResult, isRunning }: Meta
         </div>
       )}
 
-      {visibleTab === "run-details" && analysisResult && (
+      {visibleTab === "run-details" && runDetails && (
         <div role="tabpanel" id="panel-run-details" aria-labelledby="tab-run-details">
           <dl className="details-list">
-            <dt>Run ID</dt>
-            <dd>{analysisResult.run_id}</dd>
-            <dt>Status</dt>
-            <dd>{analysisResult.status}</dd>
+            {runDetails.map((detailItem) => (
+              <Fragment key={detailItem.label}>
+                <dt>{detailItem.label}</dt>
+                <dd>{detailItem.value}</dd>
+              </Fragment>
+            ))}
           </dl>
         </div>
       )}
