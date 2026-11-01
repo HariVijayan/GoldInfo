@@ -33,15 +33,3 @@ export const HISTORY_SHOWN_OPTIONS = [
 export const DEFAULT_HISTORY_SHOWN_WEEKS = 52;
 
 export const DEFAULT_FORECAST_SERIES_KEY: ForecastSeriesKey = "gold_inr_per_gram";
-
-export type ForecastSeriesOption = {
-  key: ForecastSeriesKey;
-  label: string;
-  unit: string;
-};
-
-export const FORECAST_SERIES_OPTIONS: ForecastSeriesOption[] = [
-  { key: "gold_inr_per_gram", label: "Gold in INR per gram", unit: "INR/g" },
-  { key: "gold_usd_per_ounce", label: "Gold in USD per ounce", unit: "USD/oz" },
-  { key: "inr_per_usd", label: "USD/INR exchange rate", unit: "INR per USD" },
-];

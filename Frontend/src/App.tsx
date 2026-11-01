@@ -1,6 +1,7 @@
 import { useState } from "react";
 import "./App.css";
 import AnalysisView from "./views/AnalysisView";
+import { GOLD_LABEL } from "./config/displayLabels";
 import ForecastView from "./views/ForecastView";
 
 type ActiveView = "analysis" | "forecast";
@@ -18,7 +19,7 @@ function App() {
       <div className="container">
         <header className="page-header">
           <h1>GoldInfo</h1>
-          <p>Gold price analysis and forecasting, run locally.</p>
+          <p>{GOLD_LABEL} price analysis and forecasting, run locally.</p>
         </header>
 
         <div className="tab-list view-tabs" role="tablist" aria-label="Views">

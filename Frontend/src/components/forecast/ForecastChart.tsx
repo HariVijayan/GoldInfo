@@ -10,29 +10,28 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { ChartPoint } from "../types/forecastTypes";
-import {
-  calculateYAxisDomain,
-  formatChartDate,
-  formatLongDate,
-} from "../utils/forecastChartData";
-import { formatPrice } from "../utils/formatters";
+import type { PriceSeriesOption } from "../../config/priceSeriesConfig";
+import type { ChartPoint } from "../../types/forecastTypes";
+import { calculateSpanInDays, createDateTickFormatter, formatLongDate } from "../../utils/chartDates";
+import { calculateForecastChartAxis } from "../../utils/forecastChartData";
+import { createAxisTickFormatter, formatSeriesValue } from "../../utils/formatters";
+import { ChartLegend } from "../common/ChartLegend";
 
 type ForecastChartProps = {
   chartPoints: ChartPoint[];
   lastHistoryDate: string;
-  unitLabel: string;
+  seriesOption: PriceSeriesOption;
   intervalPercent: number;
 };
 
 type ForecastTooltipProps = {
   active?: boolean;
   payload?: ReadonlyArray<{ payload: ChartPoint }>;
-  unitLabel: string;
+  seriesOption: PriceSeriesOption;
   intervalPercent: number;
 };
 
-function ForecastTooltip({ active, payload, unitLabel, intervalPercent }: ForecastTooltipProps) {
+function ForecastTooltip({ active, payload, seriesOption, intervalPercent }: ForecastTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
 
   const chartPoint = payload[0].payload;
@@ -45,18 +44,20 @@ function ForecastTooltip({ active, payload, unitLabel, intervalPercent }: Foreca
       {isForecastPoint ? (
         <>
           <p>
-            Forecast: <strong>{formatPrice(chartPoint.forecastValue)}</strong> {unitLabel}
+            Forecast: <strong>{formatSeriesValue(seriesOption, chartPoint.forecastValue)}</strong>{" "}
+            {seriesOption.unitDescription}
           </p>
           {chartPoint.band && (
             <small>
-              {intervalPercent}% range: {formatPrice(chartPoint.band[0])} to{" "}
-              {formatPrice(chartPoint.band[1])}
+              {intervalPercent}% range: {formatSeriesValue(seriesOption, chartPoint.band[0])} to{" "}
+              {formatSeriesValue(seriesOption, chartPoint.band[1])}
             </small>
           )}
         </>
       ) : (
         <p>
-          Actual: <strong>{formatPrice(chartPoint.historyValue)}</strong> {unitLabel}
+          Actual: <strong>{formatSeriesValue(seriesOption, chartPoint.historyValue)}</strong>{" "}
+          {seriesOption.unitDescription}
         </p>
       )}
     </div>
@@ -66,40 +67,51 @@ function ForecastTooltip({ active, payload, unitLabel, intervalPercent }: Foreca
 export function ForecastChart({
   chartPoints,
   lastHistoryDate,
-  unitLabel,
+  seriesOption,
   intervalPercent,
 }: ForecastChartProps) {
-  const yAxisDomain = useMemo(() => calculateYAxisDomain(chartPoints), [chartPoints]);
-  const axisFractionDigits = yAxisDomain[1] - yAxisDomain[0] < 20 ? 1 : 0;
+  const yAxis = useMemo(() => calculateForecastChartAxis(chartPoints), [chartPoints]);
+  const formatAxisTick = useMemo(
+    () => createAxisTickFormatter(yAxis.tickStep, seriesOption.valuePrefix),
+    [yAxis.tickStep, seriesOption.valuePrefix]
+  );
+  const formatDateTick = useMemo(
+    () =>
+      createDateTickFormatter(
+        chartPoints.length > 1
+          ? calculateSpanInDays(chartPoints[0].date, chartPoints[chartPoints.length - 1].date)
+          : 0
+      ),
+    [chartPoints]
+  );
 
   return (
     <div
       className="chart-frame"
       role="img"
-      aria-label={`Line chart of ${unitLabel} actual prices and forecast with an ${intervalPercent} percent range`}
+      aria-label={`Line chart of ${seriesOption.label}: actual prices and forecast with an ${intervalPercent} percent range`}
     >
       <ResponsiveContainer width="100%" height={340}>
         <ComposedChart data={chartPoints} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
           <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="date"
-            tickFormatter={formatChartDate}
+            tickFormatter={formatDateTick}
             minTickGap={56}
             tick={{ fill: "var(--color-ink-muted)", fontSize: 12 }}
             stroke="var(--color-border)"
           />
           <YAxis
-            domain={yAxisDomain}
+            domain={yAxis.domain}
+            ticks={yAxis.ticks}
             allowDataOverflow
             width={68}
-            tickFormatter={(tickValue: number) =>
-              tickValue.toLocaleString("en-IN", { maximumFractionDigits: axisFractionDigits })
-            }
+            tickFormatter={formatAxisTick}
             tick={{ fill: "var(--color-ink-muted)", fontSize: 12 }}
             stroke="var(--color-border)"
           />
           <Tooltip
-            content={<ForecastTooltip unitLabel={unitLabel} intervalPercent={intervalPercent} />}
+            content={<ForecastTooltip seriesOption={seriesOption} intervalPercent={intervalPercent} />}
           />
           <Area
             dataKey="band"
@@ -133,11 +145,13 @@ export function ForecastChart({
         </ComposedChart>
       </ResponsiveContainer>
 
-      <ul className="chart-legend" aria-hidden="true">
-        <li><span className="legend-swatch legend-actual" /> Actual</li>
-        <li><span className="legend-swatch legend-forecast" /> Forecast</li>
-        <li><span className="legend-swatch legend-band" /> {intervalPercent}% range</li>
-      </ul>
+      <ChartLegend
+        items={[
+          { label: "Actual", colorVariable: "var(--color-ink)", variant: "line" },
+          { label: "Forecast", colorVariable: "var(--color-gold)", variant: "dashed" },
+          { label: `${intervalPercent}% range`, colorVariable: "var(--color-gold)", variant: "band" },
+        ]}
+      />
     </div>
   );
 }

@@ -1,42 +1,56 @@
 import { Fragment, useState } from "react";
-import type { ArtifactFile } from "../types/analysisTypes";
-import { downloadArtifactFile, formatFileSize } from "../utils/artifactFiles";
+import type { ArtifactFile } from "../../types/analysisTypes";
+import { downloadArtifactFile, formatFileSize } from "../../utils/artifactFiles";
+import { CollapsiblePanel } from "./CollapsiblePanel";
 
-type DetailsTab = "metadata" | "run-details";
+type DetailsTab = "files" | "run-details";
 
 export type RunDetailItem = { label: string; value: string };
 
 type MetadataPanelProps = {
+  /** Must be unique on the page: both tabs stay mounted at the same time. */
+  panelId: string;
   artifactFiles: ArtifactFile[];
   runDetails: RunDetailItem[] | null;
   isRunning: boolean;
 };
 
-export function MetadataPanel({ artifactFiles, runDetails, isRunning }: MetadataPanelProps) {
-  const [activeTab, setActiveTab] = useState<DetailsTab>("metadata");
-  const visibleTab: DetailsTab = runDetails ? activeTab : "metadata";
+export function MetadataPanel({ panelId, artifactFiles, runDetails, isRunning }: MetadataPanelProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<DetailsTab>("files");
+  const visibleTab: DetailsTab = runDetails ? activeTab : "files";
+
+  const fileCountLabel = `${artifactFiles.length} downloadable ${
+    artifactFiles.length === 1 ? "file" : "files"
+  }`;
 
   return (
-    <section className="panel" aria-label="Run metadata">
-      <div className="tab-list" role="tablist">
+    <CollapsiblePanel
+      panelId={panelId}
+      title="Metadata"
+      summary={isRunning ? `${fileCountLabel} so far` : fileCountLabel}
+      isExpanded={isExpanded}
+      onToggle={() => setIsExpanded((wasExpanded) => !wasExpanded)}
+    >
+      <div className="tab-list" role="tablist" aria-label="Metadata sections">
         <button
           type="button"
           role="tab"
-          id="tab-metadata"
-          aria-selected={visibleTab === "metadata"}
-          aria-controls="panel-metadata"
+          id={`${panelId}-tab-files`}
+          aria-selected={visibleTab === "files"}
+          aria-controls={`${panelId}-panel-files`}
           className="tab-button"
-          onClick={() => setActiveTab("metadata")}
+          onClick={() => setActiveTab("files")}
         >
-          Metadata ({artifactFiles.length})
+          Files ({artifactFiles.length})
         </button>
         {runDetails && (
           <button
             type="button"
             role="tab"
-            id="tab-run-details"
+            id={`${panelId}-tab-run-details`}
             aria-selected={visibleTab === "run-details"}
-            aria-controls="panel-run-details"
+            aria-controls={`${panelId}-panel-run-details`}
             className="tab-button"
             onClick={() => setActiveTab("run-details")}
           >
@@ -45,10 +59,11 @@ export function MetadataPanel({ artifactFiles, runDetails, isRunning }: Metadata
         )}
       </div>
 
-      {visibleTab === "metadata" && (
-        <div role="tabpanel" id="panel-metadata" aria-labelledby="tab-metadata">
+      {visibleTab === "files" && (
+        <div role="tabpanel" id={`${panelId}-panel-files`} aria-labelledby={`${panelId}-tab-files`}>
           <p className="tab-intro">
-            The data behind the analysis. Download any file to inspect it in a spreadsheet or text editor.
+            The data behind the results. Download any file to inspect it in a spreadsheet or text
+            editor.
             {isRunning && " More files appear as the agent works."}
           </p>
 
@@ -78,7 +93,11 @@ export function MetadataPanel({ artifactFiles, runDetails, isRunning }: Metadata
       )}
 
       {visibleTab === "run-details" && runDetails && (
-        <div role="tabpanel" id="panel-run-details" aria-labelledby="tab-run-details">
+        <div
+          role="tabpanel"
+          id={`${panelId}-panel-run-details`}
+          aria-labelledby={`${panelId}-tab-run-details`}
+        >
           <dl className="details-list">
             {runDetails.map((detailItem) => (
               <Fragment key={detailItem.label}>
@@ -89,6 +108,6 @@ export function MetadataPanel({ artifactFiles, runDetails, isRunning }: Metadata
           </dl>
         </div>
       )}
-    </section>
+    </CollapsiblePanel>
   );
 }
