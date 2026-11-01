@@ -1,13 +1,37 @@
-import { useEffect, useRef, useState } from "react";
-import { MetricCard } from "../components/MetricCard";
-import { ProgressTimeline } from "../components/ProgressTimeline";
-import { MetadataPanel } from "../components/MetadataPanel";
-import { RangeGauge } from "../components/RangeGauge";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnalysisDashboard } from "../components/analysis/AnalysisDashboard";
+import { ProgressTimeline } from "../components/analysis/ProgressTimeline";
+import { MetadataPanel, type RunDetailItem } from "../components/common/MetadataPanel";
 import { DEFAULT_PERIOD_VALUE, PERIOD_OPTIONS } from "../config/analysisConfig";
+import { CHART_RANGE_OPTIONS, DEFAULT_CHART_RANGE_KEY } from "../config/chartRangeConfig";
+import { GOLD_LABEL } from "../config/displayLabels";
+import { DEFAULT_PRICE_SERIES_KEY } from "../config/priceSeriesConfig";
 import { streamGoldAnalysis } from "../services/analysisStreamClient";
 import type { AgentEvent, AgentResult, AnalysisState, ArtifactFile } from "../types/analysisTypes";
+import type { ChartRangeKey } from "../types/chartTypes";
+import type { PriceSeriesKey } from "../types/priceSeriesTypes";
 import { upsertArtifactFile } from "../utils/artifactFiles";
-import { formatDate, formatPercent, formatPrice, getChangeTone } from "../utils/formatters";
+import { isRangeCoveredByData } from "../utils/chartRange";
+import { formatBackendUnitLabel } from "../utils/formatters";
+import { buildHistoricalPricePoints } from "../utils/historicalPriceData";
+
+function buildRunDetails(analysisResult: AgentResult): RunDetailItem[] {
+  const requestDetails = analysisResult.request;
+
+  return [
+    { label: "Run ID", value: analysisResult.run_id },
+    { label: "Status", value: analysisResult.status },
+    { label: "Requested period", value: String(requestDetails.period) },
+    { label: "Unit", value: formatBackendUnitLabel(analysisResult.analysis.unit) },
+    { label: "Gold ticker", value: String(requestDetails.gold_ticker ?? "N/A") },
+    { label: "Exchange rate ticker", value: String(requestDetails.fx_ticker ?? "N/A") },
+    { label: "Interval", value: String(requestDetails.interval ?? "N/A") },
+    {
+      label: "Aligned observations",
+      value: analysisResult.analysis.observation_count.toLocaleString("en-IN"),
+    },
+  ];
+}
 
 function AnalysisView() {
   const [selectedPeriod, setSelectedPeriod] = useState<string>(DEFAULT_PERIOD_VALUE);
@@ -16,6 +40,10 @@ function AnalysisView() {
   const [analysisResult, setAnalysisResult] = useState<AgentResult | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [artifactFiles, setArtifactFiles] = useState<ArtifactFile[]>([]);
+  const [selectedChartSeriesKey, setSelectedChartSeriesKey] =
+    useState<PriceSeriesKey>(DEFAULT_PRICE_SERIES_KEY);
+  const [selectedChartRangeKey, setSelectedChartRangeKey] =
+    useState<ChartRangeKey>(DEFAULT_CHART_RANGE_KEY);
   const activeRequestController = useRef<AbortController | null>(null);
 
   useEffect(() => () => activeRequestController.current?.abort(), []);
@@ -30,6 +58,8 @@ function AnalysisView() {
     setAnalysisResult(null);
     setErrorMessage("");
     setArtifactFiles([]);
+    // A new period may cover fewer ranges, so always start from everything fetched.
+    setSelectedChartRangeKey(DEFAULT_CHART_RANGE_KEY);
 
     try {
       const finalResult = await streamGoldAnalysis(
@@ -57,12 +87,27 @@ function AnalysisView() {
   };
 
   const isRunning = analysisState === "running";
-  const metrics = analysisResult?.analysis;
   const selectedPeriodLabel =
     PERIOD_OPTIONS.find((option) => option.value === analysisResult?.request.period)?.label ??
-    analysisResult?.request.period;
-  const interpretationParagraphs =
-    analysisResult?.interpretation.split(/\n{2,}/).filter(Boolean) ?? [];
+    analysisResult?.request.period ??
+    "";
+
+  const pricePoints = useMemo(
+    () => buildHistoricalPricePoints(analysisResult?.processed_data),
+    [analysisResult]
+  );
+
+  const coveredRangeKeys = useMemo(() => {
+    if (pricePoints.length === 0) return new Set<ChartRangeKey>([DEFAULT_CHART_RANGE_KEY]);
+
+    const firstDate = pricePoints[0].date;
+    const lastDate = pricePoints[pricePoints.length - 1].date;
+    return new Set<ChartRangeKey>(
+      CHART_RANGE_OPTIONS.filter((rangeOption) =>
+        isRangeCoveredByData(firstDate, lastDate, rangeOption)
+      ).map((rangeOption) => rangeOption.key)
+    );
+  }, [pricePoints]);
 
   return (
     <>
@@ -84,18 +129,21 @@ function AnalysisView() {
         </div>
 
         <button type="button" className="primary-button" onClick={runAnalysis} disabled={isRunning}>
-          {isRunning ? "Analyzing…" : "Analyze gold"}
+          {isRunning ? "Analyzing…" : `Analyze`}
         </button>
       </section>
 
       {analysisState === "idle" && (
         <section className="panel empty-state">
           <h2>No analysis yet</h2>
-          <p>Choose a period above and select Analyze gold to see price movement and a written summary.</p>
+          <p>
+            Choose a period above and select Analyze {GOLD_LABEL} to see price movement, charts,
+            and a written summary. Max fetches the longest history available.
+          </p>
         </section>
       )}
 
-      <ProgressTimeline agentEvents={agentEvents} isRunning={isRunning} />
+      <ProgressTimeline agentEvents={agentEvents} analysisState={analysisState} />
 
       {analysisState === "error" && (
         <section className="panel error-panel" role="alert">
@@ -107,81 +155,24 @@ function AnalysisView() {
         </section>
       )}
 
-      {analysisState === "success" && analysisResult && metrics && (
-        <>
-          <section className="panel hero-panel">
-            <p className="hero-label">Latest price, {formatDate(metrics.latest_observation_date)}</p>
-            <p className="hero-price">
-              {formatPrice(metrics.latest_price)} <span className="hero-unit">{metrics.unit}</span>
-            </p>
-            <p className="hero-coverage">
-              {selectedPeriodLabel} selected. Data covers {formatDate(metrics.period_start)} to{" "}
-              {formatDate(metrics.period_end)} across {metrics.observation_count} observations.
-            </p>
-
-            <RangeGauge
-              unit={metrics.unit}
-              historicalLow={metrics.historical_low}
-              historicalLowDate={metrics.historical_low_date}
-              historicalHigh={metrics.historical_high}
-              historicalHighDate={metrics.historical_high_date}
-              rangePositionPercent={metrics.range_position_pct}
-            />
-          </section>
-
-          <section className="metrics-grid" aria-label="Key metrics">
-            <MetricCard
-              metricTitle="1-session change"
-              metricValue={formatPercent(metrics.one_session_change_pct)}
-              changeTone={getChangeTone(metrics.one_session_change_pct)}
-            />
-            <MetricCard
-              metricTitle="7-day change"
-              metricValue={formatPercent(metrics.seven_day_change_pct)}
-              changeTone={getChangeTone(metrics.seven_day_change_pct)}
-            />
-            <MetricCard
-              metricTitle="30-day change"
-              metricValue={formatPercent(metrics.thirty_day_change_pct)}
-              changeTone={getChangeTone(metrics.thirty_day_change_pct)}
-            />
-            <MetricCard
-              metricTitle="Previous price"
-              metricValue={`${formatPrice(metrics.previous_price)} ${metrics.unit}`}
-              metricCaption={formatDate(metrics.previous_observation_date)}
-            />
-            <MetricCard
-              metricTitle="Below historical high"
-              metricValue={formatPercent(metrics.distance_below_high_pct)}
-            />
-          </section>
-
-          <section className="panel">
-            <div className="section-heading">
-              <h2>Analysis</h2>
-              <span className="badge badge-success">Complete</span>
-            </div>
-            <div className="analysis-text">
-              {interpretationParagraphs.map((paragraphText, paragraphIndex) => (
-                <p key={paragraphIndex}>{paragraphText}</p>
-              ))}
-            </div>
-          </section>
-
-        </>
+      {analysisState === "success" && analysisResult && (
+        <AnalysisDashboard
+          analysisResult={analysisResult}
+          pricePoints={pricePoints}
+          selectedPeriodLabel={selectedPeriodLabel}
+          selectedSeriesKey={selectedChartSeriesKey}
+          onSelectSeries={setSelectedChartSeriesKey}
+          selectedRangeKey={selectedChartRangeKey}
+          onSelectRange={setSelectedChartRangeKey}
+          coveredRangeKeys={coveredRangeKeys}
+        />
       )}
 
       {artifactFiles.length > 0 && (
         <MetadataPanel
+          panelId="analysis-metadata"
           artifactFiles={artifactFiles}
-          runDetails={
-            analysisResult
-              ? [
-                { label: "Run ID", value: analysisResult.run_id },
-                { label: "Status", value: analysisResult.status },
-              ]
-              : null
-          }
+          runDetails={analysisResult ? buildRunDetails(analysisResult) : null}
           isRunning={isRunning}
         />
       )}

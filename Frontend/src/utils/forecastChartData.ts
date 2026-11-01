@@ -43,32 +43,46 @@ export function buildForecastChartModel(
   return { chartPoints, lastHistoryDate: anchorPoint?.date ?? "" };
 }
 
-export function calculateYAxisDomain(chartPoints: ChartPoint[]): [number, number] {
-  const allValues = chartPoints.flatMap((chartPoint) => [
-    chartPoint.historyValue,
-    ...(chartPoint.band ?? []),
-  ]).filter((value): value is number => value !== undefined && Number.isFinite(value));
+export type NiceAxis = {
+  domain: [number, number];
+  ticks: number[];
+  tickStep: number;
+};
 
-  if (allValues.length === 0) return [0, 1];
+/**
+ * Round-numbered axis bounds and tick marks that enclose the given values.
+ * Rounding outwards also leaves a little headroom above and below the line.
+ */
+export function calculateNiceAxis(values: number[], targetTickCount = 5): NiceAxis {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  if (finiteValues.length === 0) return { domain: [0, 1], ticks: [0, 1], tickStep: 1 };
 
-  const minimumValue = Math.min(...allValues);
-  const maximumValue = Math.max(...allValues);
-  const padding = (maximumValue - minimumValue) * 0.06 || maximumValue * 0.01;
+  const lowest = Math.min(...finiteValues);
+  const highest = Math.max(...finiteValues);
+  const span = highest - lowest || Math.abs(highest) * 0.02 || 1;
 
-  return [minimumValue - padding, maximumValue + padding];
+  const roughStep = span / Math.max(1, targetTickCount - 1);
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const residual = roughStep / magnitude;
+  const niceResidual = residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 2.5 ? 2.5 : residual <= 5 ? 5 : 10;
+  const tickStep = niceResidual * magnitude;
+
+  const axisStart = Math.floor(lowest / tickStep) * tickStep;
+  const axisEnd = Math.ceil(highest / tickStep) * tickStep;
+  const stepDecimals = Math.max(0, -Math.floor(Math.log10(tickStep)) + 1);
+
+  const ticks: number[] = [];
+  for (let tick = axisStart; tick <= axisEnd + tickStep / 2 && ticks.length < 12; tick += tickStep) {
+    ticks.push(Number(tick.toFixed(stepDecimals)));
+  }
+
+  return { domain: [ticks[0], ticks[ticks.length - 1]], ticks, tickStep };
 }
 
-export function formatChartDate(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00`).toLocaleDateString("en-IN", {
-    month: "short",
-    year: "2-digit",
-  });
-}
-
-export function formatLongDate(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00`).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+export function calculateForecastChartAxis(chartPoints: ChartPoint[]): NiceAxis {
+  return calculateNiceAxis(
+    chartPoints
+      .flatMap((chartPoint) => [chartPoint.historyValue, ...(chartPoint.band ?? [])])
+      .filter((value): value is number => value !== undefined)
+  );
 }

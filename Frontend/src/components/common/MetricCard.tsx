@@ -1,4 +1,4 @@
-import type { ChangeTone } from "../types/analysisTypes";
+import type { ChangeTone } from "../../types/analysisTypes";
 
 type MetricCardProps = {
   metricTitle: string;

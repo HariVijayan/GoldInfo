@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ForecastChart } from "../components/ForecastChart";
-import { ForecastSummaryCard } from "../components/ForecastSummaryCard";
-import { MetadataPanel } from "../components/MetadataPanel";
-import { ReliabilityPanel } from "../components/ReliabilityPanel";
-import { ForecastTable } from "../components/ForecastTable";
+import { useEffect, useRef, useState } from "react";
+import { ForecastDashboard } from "../components/forecast/ForecastDashboard";
+import { ForecastTable } from "../components/forecast/ForecastTable";
+import { MetadataPanel, type RunDetailItem } from "../components/common/MetadataPanel";
+import { GOLD_LABEL, INR_LABEL } from "../config/displayLabels";
 import {
   DEFAULT_FORECAST_FREQUENCY,
   DEFAULT_FORECAST_HORIZON_WEEKS,
@@ -11,9 +10,6 @@ import {
   DEFAULT_HISTORY_SHOWN_WEEKS,
   FORECAST_FREQUENCY_OPTIONS,
   FORECAST_HORIZON_OPTIONS,
-  FORECAST_SERIES_OPTIONS,
-  HISTORY_SHOWN_OPTIONS,
-  STEPS_PER_WEEK,
 } from "../config/forecastConfig";
 import { ForecastRequestError, requestForecast } from "../services/forecastClient";
 import type { ArtifactFile } from "../types/analysisTypes";
@@ -23,7 +19,37 @@ import type {
   ForecastSeriesKey,
   ForecastState,
 } from "../types/forecastTypes";
-import { buildForecastChartModel, formatLongDate } from "../utils/forecastChartData";
+import { formatLongDate } from "../utils/chartDates";
+
+function buildRunDetails(forecastResult: ForecastResult): RunDetailItem[] {
+  return [
+    { label: "Run ID", value: forecastResult.run_id },
+    { label: "Generated at", value: forecastResult.generated_at },
+    { label: "Horizon", value: `${forecastResult.forecast.horizon_weeks} weeks` },
+    { label: "Detail", value: forecastResult.forecast.frequency },
+    {
+      label: "Range level",
+      value: `${Math.round(forecastResult.forecast.interval_level * 100)}%`,
+    },
+    {
+      label: "Training observations",
+      value: `${forecastResult.data_summary.observations_used.toLocaleString("en-IN")} ${
+        forecastResult.data_summary.training_frequency
+      }`,
+    },
+    {
+      label: "Aligned daily observations",
+      value: forecastResult.data_summary.aligned_daily_observations.toLocaleString("en-IN"),
+    },
+    {
+      label: "History used",
+      value: `${formatLongDate(forecastResult.data_summary.history_start)} to ${formatLongDate(
+        forecastResult.data_summary.history_end
+      )}`,
+    },
+    { label: "Model", value: forecastResult.model.approach },
+  ];
+}
 
 function ForecastView() {
   const [horizonWeeks, setHorizonWeeks] = useState<number>(DEFAULT_FORECAST_HORIZON_WEEKS);
@@ -67,22 +93,6 @@ function ForecastView() {
   };
 
   const isRunning = forecastState === "running";
-  const selectedSeriesOption =
-    FORECAST_SERIES_OPTIONS.find((option) => option.key === selectedSeriesKey) ??
-    FORECAST_SERIES_OPTIONS[0];
-
-  const chartModel = useMemo(
-    () =>
-      forecastResult
-        ? buildForecastChartModel(
-            selectedSeriesKey,
-            forecastResult.history.points,
-            forecastResult.forecast.points,
-            historyWeeksShown * STEPS_PER_WEEK[forecastResult.forecast.frequency]
-          )
-        : null,
-    [forecastResult, selectedSeriesKey, historyWeeksShown]
-  );
 
   return (
     <>
@@ -131,7 +141,7 @@ function ForecastView() {
           <h2>No forecast yet</h2>
           <p>
             Choose how far ahead to look and select Generate forecast. The model learns from the
-            full available price history, so it can take a little while.
+            full available {GOLD_LABEL} price history, so it can take a little while.
           </p>
         </section>
       )}
@@ -142,8 +152,8 @@ function ForecastView() {
           <div>
             <h2>Building your forecast</h2>
             <p>
-              Downloading the full price history, converting it to INR per gram, and training the
-              models. This usually takes 10 to 30 seconds.
+              Downloading the full {GOLD_LABEL} price history, converting it to {INR_LABEL} per
+              gram, and training the models. This usually takes 10 to 30 seconds.
             </p>
           </div>
         </section>
@@ -159,64 +169,14 @@ function ForecastView() {
         </section>
       )}
 
-      {forecastState === "success" && forecastResult && chartModel && (
+      {forecastState === "success" && forecastResult && (
         <>
-          <section
-            className="forecast-cards"
-            role="radiogroup"
-            aria-label="Choose a price to chart"
-          >
-            {FORECAST_SERIES_OPTIONS.map((seriesOption) => (
-              <ForecastSummaryCard
-                key={seriesOption.key}
-                seriesOption={seriesOption}
-                summary={forecastResult.forecast.end_of_horizon[seriesOption.key]}
-                isSelected={selectedSeriesKey === seriesOption.key}
-                onSelect={() => setSelectedSeriesKey(seriesOption.key)}
-              />
-            ))}
-          </section>
-
-          <section className="panel">
-            <div className="section-heading chart-heading">
-              <h2>{selectedSeriesOption.label}</h2>
-              <div role="radiogroup" aria-label="History shown" className="period-picker">
-                {HISTORY_SHOWN_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={historyWeeksShown === option.value}
-                    className="period-option"
-                    onClick={() => setHistoryWeeksShown(option.value)}
-                  >
-                    {option.label} back
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <ForecastChart
-              chartPoints={chartModel.chartPoints}
-              lastHistoryDate={chartModel.lastHistoryDate}
-              unitLabel={selectedSeriesOption.unit}
-              intervalPercent={Math.round(forecastResult.forecast.interval_level * 100)}
-            />
-
-            <p className="chart-footnote">
-              {forecastResult.forecast.steps} {forecastResult.forecast.frequency} points from{" "}
-              {formatLongDate(forecastResult.forecast.start_date)} to{" "}
-              {formatLongDate(forecastResult.forecast.end_date)}, trained on{" "}
-              {forecastResult.data_summary.observations_used} {forecastResult.forecast.frequency}{" "}
-              observations ({formatLongDate(forecastResult.data_summary.history_start)} onward).
-            </p>
-          </section>
-
-          <ReliabilityPanel
-            backtest={forecastResult.model.backtest}
+          <ForecastDashboard
+            forecastResult={forecastResult}
             selectedSeriesKey={selectedSeriesKey}
-            selectedSeriesLabel={selectedSeriesOption.label}
-            warnings={forecastResult.warnings}
+            onSelectSeries={setSelectedSeriesKey}
+            historyWeeksShown={historyWeeksShown}
+            onSelectHistoryWeeks={setHistoryWeeksShown}
           />
 
           <ForecastTable
@@ -228,17 +188,9 @@ function ForecastView() {
 
       {artifactFiles.length > 0 && (
         <MetadataPanel
+          panelId="forecast-metadata"
           artifactFiles={artifactFiles}
-          runDetails={
-            forecastResult
-              ? [
-                  { label: "Run ID", value: forecastResult.run_id },
-                  { label: "Generated at", value: forecastResult.generated_at },
-                  { label: "Horizon", value: `${forecastResult.forecast.horizon_weeks} weeks` },
-                  { label: "Detail", value: forecastResult.forecast.frequency },
-                ]
-              : null
-          }
+          runDetails={forecastResult ? buildRunDetails(forecastResult) : null}
           isRunning={isRunning}
         />
       )}

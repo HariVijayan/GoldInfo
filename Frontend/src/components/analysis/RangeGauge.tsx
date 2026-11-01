@@ -1,7 +1,7 @@
-import { clampPercent, formatDate, formatPercent, formatPrice } from "../utils/formatters";
+import { clampPercent, formatDate, formatShare } from "../../utils/formatters";
 
 type RangeGaugeProps = {
-  unit: string;
+  formatValue: (value: number) => string;
   historicalLow: number;
   historicalLowDate: string;
   historicalHigh: number;
@@ -10,7 +10,7 @@ type RangeGaugeProps = {
 };
 
 export function RangeGauge({
-  unit,
+  formatValue,
   historicalLow,
   historicalLowDate,
   historicalHigh,
@@ -22,8 +22,8 @@ export function RangeGauge({
   return (
     <div className="range-gauge">
       <p className="range-gauge-summary">
-        Trading at <strong>{formatPercent(rangePositionPercent).replace("+", "")}</strong> of the
-        way up its range for this period.
+        Trading at <strong>{formatShare(rangePositionPercent, 2)}</strong> of the way up its range
+        for this period.
       </p>
 
       <div
@@ -41,16 +41,12 @@ export function RangeGauge({
       <div className="range-ends">
         <div>
           <span className="range-end-label">Low</span>
-          <span className="range-end-price">
-            {formatPrice(historicalLow)} {unit}
-          </span>
+          <span className="range-end-price">{formatValue(historicalLow)}</span>
           <small>{formatDate(historicalLowDate)}</small>
         </div>
         <div className="range-end-right">
           <span className="range-end-label">High</span>
-          <span className="range-end-price">
-            {formatPrice(historicalHigh)} {unit}
-          </span>
+          <span className="range-end-price">{formatValue(historicalHigh)}</span>
           <small>{formatDate(historicalHighDate)}</small>
         </div>
       </div>
