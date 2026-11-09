@@ -3,12 +3,14 @@ import "./App.css";
 import AnalysisView from "./views/AnalysisView";
 import { GOLD_LABEL } from "./config/displayLabels";
 import ForecastView from "./views/ForecastView";
+import SavingsView from "./views/SavingsView";
 
-type ActiveView = "analysis" | "forecast";
+type ActiveView = "analysis" | "forecast" | "savings";
 
 const VIEW_OPTIONS: { value: ActiveView; label: string }[] = [
   { value: "analysis", label: "Historical analysis" },
   { value: "forecast", label: "Forecast" },
+  { value: "savings", label: "Savings" },
 ];
 
 function App() {
@@ -19,7 +21,7 @@ function App() {
       <div className="container">
         <header className="page-header">
           <h1>GoldInfo</h1>
-          <p>{GOLD_LABEL} price analysis and forecasting, run locally.</p>
+          <p>{GOLD_LABEL} price analysis, forecasting and savings comparison, run locally.</p>
         </header>
 
         <div className="tab-list view-tabs" role="tablist" aria-label="Views">
@@ -57,6 +59,15 @@ function App() {
           hidden={activeView !== "forecast"}
         >
           <ForecastView />
+        </div>
+        <div
+          className="view"
+          role="tabpanel"
+          id="view-panel-savings"
+          aria-labelledby="view-tab-savings"
+          hidden={activeView !== "savings"}
+        >
+          <SavingsView />
         </div>
       </div>
     </main>

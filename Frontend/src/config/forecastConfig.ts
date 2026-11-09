@@ -1,6 +1,7 @@
 import type { ForecastFrequency, ForecastSeriesKey } from "../types/forecastTypes";
+import { API_ROUTES, buildApiUrl } from "./apiRoutes";
 
-export const FORECAST_URL = "http://127.0.0.1:8000/api/forecast";
+export const FORECAST_URL = buildApiUrl(API_ROUTES.forecast);
 
 export const FORECAST_HORIZON_OPTIONS = [
   { label: "3 months", value: 13 },

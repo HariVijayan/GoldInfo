@@ -1,8 +1,7 @@
 import json
+import logging
 from datetime import datetime
 from typing import Any, Callable
-
-import ollama
 
 from market_data import get_gold_history, get_usd_inr_history
 from conversion import convert_gold_history
@@ -21,8 +20,21 @@ from artifacts import (
 from dataclasses import dataclass, field
 import uuid
 
-MODEL = "qwen2.5:1.5b"
+from model_pipelines import (
+    InvalidModelResponseError,
+    ModelPipeline,
+    ModelPipelineError,
+    RequestedToolCall,
+    ToolCallTurn,
+    resolve_pipeline,
+)
+
+logger = logging.getLogger("goldinfo.agent")
+
 MAX_ITERATIONS = 5
+
+TOOL_GET_GOLD_HISTORY = "get_gold_history"
+TOOL_ANALYZE_GOLD_HISTORY = "analyze_gold_history"
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +153,11 @@ class AgentState:
     # Original user request
     goal: str = ""
 
+    # Model that serves this run (set from the resolved pipeline)
+    model_id: str = ""
+    model_provider: str = ""
+    model_supports_tool_calling: bool = False
+
     # Explicit request parameters
     gold_ticker: str = "GC=F"
     fx_ticker: str = "INR=X"
@@ -185,6 +202,11 @@ class AgentState:
         return {
             "goal": self.goal,
             "period": self.period,
+            "model": self.model_id,
+            "model_provider": self.model_provider,
+            "model_supports_tool_calling": (
+                self.model_supports_tool_calling
+            ),
             "gold_ticker": self.gold_ticker,
             "fx_ticker": self.fx_ticker,
             "interval": self.interval,
@@ -320,44 +342,6 @@ TOOLS = [
         },
     },
 ]
-
-
-# ---------------------------------------------------------------------------
-# Tool argument parsing
-# ---------------------------------------------------------------------------
-
-def parse_tool_arguments(
-    tool_name: str,
-    raw_arguments: Any,
-) -> dict[str, Any]:
-    if raw_arguments is None:
-        return {}
-
-    if isinstance(raw_arguments, dict):
-        return raw_arguments
-
-    if isinstance(raw_arguments, str):
-        try:
-            parsed = json.loads(raw_arguments)
-        except json.JSONDecodeError as exc:
-            raise ModelResponseError(
-                f"Ollama returned malformed JSON arguments for "
-                f"tool '{tool_name}'. "
-                f"Original error: {exc}"
-            ) from exc
-
-        if not isinstance(parsed, dict):
-            raise ModelResponseError(
-                f"Ollama returned invalid arguments for tool "
-                f"'{tool_name}'. Expected a JSON object."
-            )
-
-        return parsed
-
-    raise ModelResponseError(
-        f"Ollama returned unsupported argument data for tool "
-        f"'{tool_name}'. Expected a dictionary or JSON string."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +656,139 @@ def run_required_tool_step(
 
 
 # ---------------------------------------------------------------------------
+# Model conversation helpers
+# ---------------------------------------------------------------------------
+
+def request_model_tool_calls(
+    pipeline: ModelPipeline,
+    messages: list[dict[str, Any]],
+    stage_description: str,
+) -> ToolCallTurn:
+    """Ask the model for tool calls and translate pipeline failures."""
+
+    try:
+        return pipeline.request_tool_calls(messages, TOOLS)
+    except InvalidModelResponseError as exc:
+        raise ModelResponseError(
+            f"Model '{pipeline.model_id}' gave an unusable response "
+            f"{stage_description}. {exc}"
+        ) from exc
+    except ModelPipelineError as exc:
+        raise AgentError(
+            f"Model '{pipeline.model_id}' request failed "
+            f"{stage_description}. {exc}"
+        ) from exc
+
+
+def generate_model_text(
+    pipeline: ModelPipeline,
+    messages: list[dict[str, Any]],
+    stage_description: str,
+) -> str:
+    """Ask the model for plain text and translate pipeline failures."""
+
+    try:
+        return pipeline.generate_text(messages)
+    except InvalidModelResponseError as exc:
+        raise ModelResponseError(
+            f"Model '{pipeline.model_id}' gave an unusable response "
+            f"{stage_description}. {exc}"
+        ) from exc
+    except ModelPipelineError as exc:
+        raise AgentError(
+            f"Model '{pipeline.model_id}' request failed "
+            f"{stage_description}. {exc}"
+        ) from exc
+
+
+def record_tool_exchange(
+    messages: list[dict[str, Any]],
+    pipeline: ModelPipeline,
+    tool_call: RequestedToolCall,
+    tool_result: dict[str, Any],
+) -> None:
+    """
+    Add one tool call and its result to the conversation.
+
+    Models without tool calling never see tool messages: their templates
+    do not define them, and the final prompt already contains the numbers.
+    """
+
+    if not pipeline.supports_tool_calling:
+        return
+
+    messages.append(
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                    }
+                }
+            ],
+        }
+    )
+    messages.append(
+        {
+            "role": "tool",
+            "tool_name": tool_call.name,
+            "content": json.dumps(tool_result),
+        }
+    )
+
+
+def find_requested_tool_call(
+    turn: ToolCallTurn,
+    tool_name: str,
+) -> RequestedToolCall | None:
+    for requested_call in turn.tool_calls:
+        if requested_call.name == tool_name:
+            return requested_call
+    return None
+
+
+def enforce_required_step(
+    state: AgentState,
+    emit: EventHandler,
+    messages: list[dict[str, Any]],
+    pipeline: ModelPipeline,
+    tool_name: str,
+) -> None:
+    """Run a mandatory step the model did not (correctly) request."""
+
+    result = run_required_tool_step(state, emit)
+    record_tool_exchange(
+        messages,
+        pipeline,
+        RequestedToolCall(name=tool_name, arguments={}),
+        result,
+    )
+
+
+def describe_unrequested_step(
+    turn: ToolCallTurn,
+    expected_tool_name: str,
+) -> str:
+    if not turn.tool_calls:
+        return (
+            f"Model did not request '{expected_tool_name}'. "
+            "Application is enforcing the required step."
+        )
+
+    requested_names = ", ".join(
+        sorted({requested_call.name for requested_call in turn.tool_calls})
+    )
+    return (
+        f"Model requested '{requested_names}' instead of "
+        f"'{expected_tool_name}'. Application is enforcing the "
+        "required step."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Agent runtime
 # ---------------------------------------------------------------------------
 
@@ -679,20 +796,42 @@ def run_agent(
     goal: str,
     period: str,
     event_handler: EventHandler | None = None,
+    model_pipeline: ModelPipeline | None = None,
 ) -> AgentResult:
-    logger = AgentLogger()
+    logger_for_cli = AgentLogger()
 
     if event_handler is None:
-        event_handler = logger.handle
+        event_handler = logger_for_cli.handle
+
+    if model_pipeline is None:
+        try:
+            model_pipeline = resolve_pipeline(None)
+        except ModelPipelineError as exc:
+            raise AgentError(f"No model is available. {exc}") from exc
 
     state = AgentState(
         goal=goal,
         period=period,
+        model_id=model_pipeline.model_id,
+        model_provider=model_pipeline.provider,
+        model_supports_tool_calling=model_pipeline.supports_tool_calling,
+    )
+
+    logger.info(
+        "run=%s started model=%s provider=%s tool_calling=%s period=%s",
+        state.run_id,
+        state.model_id,
+        state.model_provider,
+        state.model_supports_tool_calling,
+        period,
     )
 
     try:
-        return _execute_agent_workflow(state, event_handler)
+        result = _execute_agent_workflow(state, event_handler, model_pipeline)
     except Exception as exc:
+        logger.warning(
+            "run=%s failed at stage=%s: %s", state.run_id, state.current_stage, exc
+        )
         # Attach whatever was produced before the failure so callers can
         # still return the intermediate data.
         try:
@@ -701,10 +840,14 @@ def run_agent(
             pass
         raise
 
+    logger.info("run=%s completed", state.run_id)
+    return result
+
 
 def _execute_agent_workflow(
     state: AgentState,
     emit: EventHandler,
+    pipeline: ModelPipeline,
 ) -> AgentResult:
     goal = state.goal
     period = state.period
@@ -712,11 +855,13 @@ def _execute_agent_workflow(
     emit(
         create_event(
             "START",
-            f"GoldInfo agent started using model '{MODEL}'",
+            f"GoldInfo agent started using model '{pipeline.model_id}' "
+            f"({pipeline.provider}, tool calling: "
+            f"{'yes' if pipeline.supports_tool_calling else 'no'})",
         )
     )
 
-    messages: list[Any] = [
+    messages: list[dict[str, Any]] = [
         {
             "role": "system",
             "content": SYSTEM_PROMPT.strip(),
@@ -730,244 +875,130 @@ def _execute_agent_workflow(
         },
     ]
 
-    # -----------------------------------------------------------------------
-    # Phase 1: market-data retrieval
-    # -----------------------------------------------------------------------
-    while not state.history_available:
+    if not pipeline.supports_tool_calling:
+        # -------------------------------------------------------------------
+        # Models without tool calling: the application runs both data steps
+        # itself. The model is only used for the final interpretation.
+        # -------------------------------------------------------------------
         emit(
             create_event(
-                "MODEL",
-                "Requesting model response before market-data retrieval",
+                "INFO",
+                f"Model '{pipeline.model_id}' does not support tool "
+                "calling. The application will run the required data "
+                "steps directly.",
             )
         )
+        state.current_stage = "data_retrieval"
+        enforce_required_step(
+            state, emit, messages, pipeline, TOOL_GET_GOLD_HISTORY
+        )
+        state.current_stage = "conversion_and_analysis"
+        enforce_required_step(
+            state, emit, messages, pipeline, TOOL_ANALYZE_GOLD_HISTORY
+        )
+    else:
+        # -------------------------------------------------------------------
+        # Phase 1: market-data retrieval
+        # -------------------------------------------------------------------
+        state.current_stage = "data_retrieval"
 
-        try:
-            response = ollama.chat(
-                model=MODEL,
-                messages=messages,
-                tools=TOOLS,
-            )
-        except Exception as exc:
-            raise AgentError(
-                "Ollama request failed while retrieving market data. "
-                f"Make sure Ollama is running and model '{MODEL}' "
-                f"is available. Original error: {exc}"
-            ) from exc
-
-        if response is None:
-            raise ModelResponseError(
-                "Ollama returned no response while requesting "
-                "the market-data step."
-            )
-
-        message = getattr(response, "message", None)
-
-        if message is None:
-            raise ModelResponseError(
-                "Ollama returned a response without a message "
-                "while requesting the market-data step."
-            )
-
-        tool_calls = getattr(message, "tool_calls", None) or []
-
-        if tool_calls:
-            messages.append(message)
-
-            tool_call = tool_calls[0]
-            function = getattr(tool_call, "function", None)
-
-            if function is None:
-                raise ModelResponseError(
-                    "Ollama returned a malformed tool call: "
-                    "missing function."
-                )
-
-            tool_name = getattr(function, "name", None)
-
-            if not isinstance(tool_name, str):
-                raise ModelResponseError(
-                    "Ollama returned a tool call without a valid "
-                    "function name."
-                )
-
-            raw_arguments = getattr(function, "arguments", {})
-            arguments = parse_tool_arguments(
-                tool_name,
-                raw_arguments,
-            )
-
+        while not state.history_available:
             emit(
                 create_event(
-                    "TOOL",
-                    f"Model requested tool '{tool_name}'",
+                    "MODEL",
+                    "Requesting model response before market-data "
+                    "retrieval",
                 )
             )
 
-            result = execute_tool(
-                tool_name,
-                arguments,
-                state,
-                emit,
+            turn = request_model_tool_calls(
+                pipeline, messages, "before market-data retrieval"
+            )
+            retrieval_call = find_requested_tool_call(
+                turn, TOOL_GET_GOLD_HISTORY
             )
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_name": tool_name,
-                    "content": json.dumps(result),
-                }
-            )
-            continue
-
-        emit(
-            create_event(
-                "WARNING",
-                "Model attempted to finish before retrieving "
-                "market data. Application is enforcing the "
-                "required retrieval step.",
-            )
-        )
-
-        result = run_required_tool_step(state, emit)
-
-        messages.append(
-            {
-                "role": "tool",
-                "tool_name": "get_gold_history",
-                "content": json.dumps(result),
-            }
-        )
-
-    # -----------------------------------------------------------------------
-    # Phase 2: conversion + statistical analysis
-    # -----------------------------------------------------------------------
-    if not state.analysis_available:
-        emit(
-            create_event(
-                "MODEL",
-                "Market data is ready. Requesting model continuation "
-                "for the analysis step.",
-            )
-        )
-
-        try:
-            response = ollama.chat(
-                model=MODEL,
-                messages=messages,
-                tools=TOOLS,
-            )
-        except Exception as exc:
-            raise AgentError(
-                "Ollama request failed before the historical "
-                f"analysis step. Original error: {exc}"
-            ) from exc
-
-        if response is None:
-            raise ModelResponseError(
-                "Ollama returned no response before the "
-                "historical analysis step."
-            )
-
-        message = getattr(response, "message", None)
-
-        if message is None:
-            raise ModelResponseError(
-                "Ollama returned a response without a message "
-                "before the historical analysis step."
-            )
-
-        tool_calls = getattr(message, "tool_calls", None) or []
-
-        if tool_calls:
-            messages.append(message)
-            analysis_tool_found = False
-
-            for tool_call in tool_calls:
-                function = getattr(tool_call, "function", None)
-
-                if function is None:
-                    raise ModelResponseError(
-                        "Ollama returned a malformed tool call: "
-                        "missing function."
-                    )
-
-                tool_name = getattr(function, "name", None)
-
-                if not isinstance(tool_name, str):
-                    raise ModelResponseError(
-                        "Ollama returned a tool call without a valid "
-                        "function name."
-                    )
-
-                raw_arguments = getattr(function, "arguments", {})
-                arguments = parse_tool_arguments(
-                    tool_name,
-                    raw_arguments,
-                )
-
+            if retrieval_call is not None:
                 emit(
                     create_event(
                         "TOOL",
-                        f"Model requested tool '{tool_name}'",
+                        f"Model requested tool '{retrieval_call.name}'",
                     )
                 )
-
                 result = execute_tool(
-                    tool_name,
-                    arguments,
+                    retrieval_call.name,
+                    retrieval_call.arguments,
                     state,
                     emit,
                 )
-
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_name": tool_name,
-                        "content": json.dumps(result),
-                    }
+                record_tool_exchange(
+                    messages, pipeline, retrieval_call, result
                 )
+                continue
 
-                if tool_name == "analyze_gold_history":
-                    analysis_tool_found = True
-
-            if not analysis_tool_found:
-                emit(
-                    create_event(
-                        "WARNING",
-                        "Model did not request analyze_gold_history. "
-                        "Application is enforcing the required "
-                        "analysis step.",
-                    )
-                )
-
-                result = run_required_tool_step(state, emit)
-
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_name": "analyze_gold_history",
-                        "content": json.dumps(result),
-                    }
-                )
-        else:
             emit(
                 create_event(
                     "WARNING",
-                    "Model returned final text before calculating "
-                    "statistics. Application is enforcing the "
-                    "required analysis step.",
+                    describe_unrequested_step(turn, TOOL_GET_GOLD_HISTORY),
+                )
+            )
+            enforce_required_step(
+                state, emit, messages, pipeline, TOOL_GET_GOLD_HISTORY
+            )
+
+        # -------------------------------------------------------------------
+        # Phase 2: conversion + statistical analysis
+        # -------------------------------------------------------------------
+        state.current_stage = "conversion_and_analysis"
+
+        if not state.analysis_available:
+            emit(
+                create_event(
+                    "MODEL",
+                    "Market data is ready. Requesting model continuation "
+                    "for the analysis step.",
                 )
             )
 
-            result = run_required_tool_step(state, emit)
-
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_name": "analyze_gold_history",
-                    "content": json.dumps(result),
-                }
+            turn = request_model_tool_calls(
+                pipeline, messages, "before the historical analysis step"
             )
+            analysis_call = find_requested_tool_call(
+                turn, TOOL_ANALYZE_GOLD_HISTORY
+            )
+
+            if analysis_call is not None:
+                emit(
+                    create_event(
+                        "TOOL",
+                        f"Model requested tool '{analysis_call.name}'",
+                    )
+                )
+                result = execute_tool(
+                    analysis_call.name,
+                    analysis_call.arguments,
+                    state,
+                    emit,
+                )
+                record_tool_exchange(
+                    messages, pipeline, analysis_call, result
+                )
+            else:
+                emit(
+                    create_event(
+                        "WARNING",
+                        describe_unrequested_step(
+                            turn, TOOL_ANALYZE_GOLD_HISTORY
+                        ),
+                    )
+                )
+                enforce_required_step(
+                    state,
+                    emit,
+                    messages,
+                    pipeline,
+                    TOOL_ANALYZE_GOLD_HISTORY,
+                )
 
     # -----------------------------------------------------------------------
     # Validate application state before final interpretation
@@ -999,6 +1030,8 @@ def _execute_agent_workflow(
     # -----------------------------------------------------------------------
     # Phase 3: final LLM interpretation
     # -----------------------------------------------------------------------
+    state.current_stage = "interpretation"
+
     emit(
         create_event(
             "MODEL",
@@ -1031,44 +1064,9 @@ def _execute_agent_workflow(
         }
     )
 
-    try:
-        final_response = ollama.chat(
-            model=MODEL,
-            messages=messages,
-        )
-    except Exception as exc:
-        raise AgentError(
-            "Ollama request failed while generating the final "
-            f"interpretation. Original error: {exc}"
-        ) from exc
-
-    if final_response is None:
-        raise ModelResponseError(
-            "Ollama returned no response while generating the "
-            "final interpretation."
-        )
-
-    final_message = getattr(final_response, "message", None)
-
-    if final_message is None:
-        raise ModelResponseError(
-            "Ollama returned a response without a message while "
-            "generating the final interpretation."
-        )
-
-    final_content = getattr(final_message, "content", None)
-
-    if not isinstance(final_content, str):
-        raise ModelResponseError(
-            "Ollama returned a final message without usable text."
-        )
-
-    final_content = final_content.strip()
-
-    if not final_content:
-        raise ModelResponseError(
-            "Ollama returned an empty final analysis."
-        )
+    final_content = generate_model_text(
+        pipeline, messages, "while generating the final interpretation"
+    )
 
     emit(
         create_event(
@@ -1106,6 +1104,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--period", required=True)
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Ollama model to use. Defaults to GOLDINFO_DEFAULT_MODEL.",
+    )
     args = parser.parse_args()
 
     goal = """
@@ -1118,13 +1121,17 @@ recommendations.
 """.strip()
 
     try:
-        result = run_agent(goal, period=args.period)
+        result = run_agent(
+            goal,
+            period=args.period,
+            model_pipeline=resolve_pipeline(args.model),
+        )
         print("\n=== FINAL ANALYSIS ===")
         print(result.interpretation)
         print("\n=== METADATA FILES ===")
         for artifact_file in result.metadata["files"]:
             print(f"{artifact_file['filename']}: {artifact_file['description']}")
-    except AgentError as exc:
+    except (AgentError, ModelPipelineError) as exc:
         print("\n=== ANALYSIS FAILED ===")
         print(f"Reason: {exc}")
     except KeyboardInterrupt:

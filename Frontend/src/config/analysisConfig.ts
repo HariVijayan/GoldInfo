@@ -1,4 +1,6 @@
-export const ANALYSIS_STREAM_URL = "http://127.0.0.1:8000/api/analyze/stream";
+import { API_ROUTES, buildApiUrl } from "./apiRoutes";
+
+export const ANALYSIS_STREAM_URL = buildApiUrl(API_ROUTES.analyzeStream);
 
 export const DEFAULT_ANALYSIS_GOAL =
   "Analyze historical gold prices and describe the observed movement.";

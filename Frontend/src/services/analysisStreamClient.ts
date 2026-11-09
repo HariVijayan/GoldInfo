@@ -1,5 +1,6 @@
 import { ANALYSIS_STREAM_URL, DEFAULT_ANALYSIS_GOAL } from "../config/analysisConfig";
 import type { AgentEvent, AgentResult, ArtifactFile } from "../types/analysisTypes";
+import { readErrorMessage } from "./apiErrors";
 
 type ParsedServerEvent = { eventName: string; payload: unknown };
 
@@ -39,6 +40,7 @@ function validateFinalResult(finalResult: AgentResult): AgentResult {
 
 export async function streamGoldAnalysis(
   periodValue: string,
+  modelId: string,
   streamHandlers: {
     onStatusEvent: (agentEvent: AgentEvent) => void;
     onArtifactFile: (artifactFile: ArtifactFile) => void;
@@ -48,12 +50,17 @@ export async function streamGoldAnalysis(
   const response = await fetch(ANALYSIS_STREAM_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ goal: DEFAULT_ANALYSIS_GOAL, period: periodValue }),
+    body: JSON.stringify({
+      goal: DEFAULT_ANALYSIS_GOAL,
+      period: periodValue,
+      // An empty id lets the server use its default model.
+      model: modelId || undefined,
+    }),
     signal: abortSignal,
   });
 
   if (!response.ok) {
-    throw new Error(`Server returned HTTP ${response.status}.`);
+    throw new Error(await readErrorMessage(response));
   }
   if (!response.body) {
     throw new Error("Streaming response body is unavailable.");

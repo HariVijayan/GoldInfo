@@ -441,3 +441,99 @@ def build_forecast_report_artifact(
         "row_count": None,
         "content": "\n".join(lines),
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Savings comparison artifacts
+# ---------------------------------------------------------------------------
+
+FILENAME_SAVINGS_TIMELINE = "savings_timeline.csv"
+FILENAME_SAVINGS_REPORT = "savings_report.txt"
+
+ARTIFACT_FILENAME_ORDER += [
+    FILENAME_SAVINGS_TIMELINE,
+    FILENAME_SAVINGS_REPORT,
+]
+
+
+def build_savings_timeline_artifact(
+    timeline_rows: list[dict[str, Any]],
+) -> ArtifactFile:
+    return _build_csv_artifact(
+        filename=FILENAME_SAVINGS_TIMELINE,
+        description=(
+            "Daily value in INR of the gold holding and of the INR savings "
+            "balance, from the purchase date to the latest observation."
+        ),
+        column_names=[
+            "date",
+            "gold_price_per_gram",
+            "gold_value",
+            "inr_value",
+        ],
+        rows=timeline_rows,
+    )
+
+
+def build_savings_report_artifact(
+    *,
+    run_id: str,
+    request_parameters: Mapping[str, Any],
+    summary: Mapping[str, Any],
+    currency_effect: Mapping[str, Any],
+    calendar_years: list[Mapping[str, Any]],
+    holding_period_outcomes: list[Mapping[str, Any]],
+    warnings: list[str],
+) -> ArtifactFile:
+    lines: list[str] = [
+        "GOLDINFO SAVINGS COMPARISON REPORT",
+        "==================================",
+        f"Run ID: {run_id}",
+        f"Report generated: {datetime.now().isoformat(timespec='seconds')}",
+        "",
+        "REQUEST",
+        "-------",
+    ]
+    _append_mapping_lines(lines, request_parameters)
+
+    lines += ["", "SUMMARY", "-------"]
+    _append_mapping_lines(lines, summary)
+
+    lines += ["", "GOLD IN RUPEES VERSUS DOLLARS", "-----------------------------"]
+    _append_mapping_lines(lines, currency_effect)
+
+    lines += ["", "CALENDAR YEARS", "--------------"]
+    for year_row in calendar_years:
+        partial_note = " (partial year)" if year_row["is_partial_year"] else ""
+        lines.append(
+            f"{year_row['year']}{partial_note}: gold "
+            f"{_format_report_value(year_row['gold_change_pct'])}%, savings "
+            f"{_format_report_value(year_row['inr_savings_change_pct'])}%"
+        )
+
+    lines += ["", "ROLLING HOLDING PERIODS", "-----------------------"]
+    if not holding_period_outcomes:
+        lines.append("The selected range is shorter than every window.")
+    for outcome in holding_period_outcomes:
+        lines.append(f"{outcome['years']} years:")
+        _append_mapping_lines(
+            lines,
+            {name: value for name, value in outcome.items() if name != "years"},
+            indent="  ",
+        )
+
+    lines += ["", "WARNINGS AND CAVEATS", "--------------------"]
+    lines += [f"- {warning}" for warning in warnings]
+    lines.append("")
+
+    return {
+        "filename": FILENAME_SAVINGS_REPORT,
+        "media_type": TEXT_MEDIA_TYPE,
+        "description": (
+            "Inputs, results for gold and INR savings, calendar-year and "
+            "rolling-window statistics, and caveats."
+        ),
+        "row_count": None,
+        "content": "\n".join(lines),
+    }
