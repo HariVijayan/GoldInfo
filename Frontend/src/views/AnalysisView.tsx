@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisDashboard } from "../components/analysis/AnalysisDashboard";
+import { ModelSelector } from "../components/analysis/ModelSelector";
 import { ProgressTimeline } from "../components/analysis/ProgressTimeline";
 import { MetadataPanel, type RunDetailItem } from "../components/common/MetadataPanel";
 import { DEFAULT_PERIOD_VALUE, PERIOD_OPTIONS } from "../config/analysisConfig";
 import { CHART_RANGE_OPTIONS, DEFAULT_CHART_RANGE_KEY } from "../config/chartRangeConfig";
 import { GOLD_LABEL } from "../config/displayLabels";
+import { useModelCatalog } from "../hooks/useModelCatalog";
 import { DEFAULT_PRICE_SERIES_KEY } from "../config/priceSeriesConfig";
 import { streamGoldAnalysis } from "../services/analysisStreamClient";
 import type { AgentEvent, AgentResult, AnalysisState, ArtifactFile } from "../types/analysisTypes";
@@ -22,6 +24,16 @@ function buildRunDetails(analysisResult: AgentResult): RunDetailItem[] {
     { label: "Run ID", value: analysisResult.run_id },
     { label: "Status", value: analysisResult.status },
     { label: "Requested period", value: String(requestDetails.period) },
+    {
+      label: "Model",
+      value: requestDetails.model
+        ? `${String(requestDetails.model)} (${String(requestDetails.model_provider ?? "unknown")})`
+        : "N/A",
+    },
+    {
+      label: "Tool calling",
+      value: requestDetails.model_supports_tool_calling ? "Model-driven" : "Application-driven",
+    },
     { label: "Unit", value: formatBackendUnitLabel(analysisResult.analysis.unit) },
     { label: "Gold ticker", value: String(requestDetails.gold_ticker ?? "N/A") },
     { label: "Exchange rate ticker", value: String(requestDetails.fx_ticker ?? "N/A") },
@@ -45,6 +57,14 @@ function AnalysisView() {
   const [selectedChartRangeKey, setSelectedChartRangeKey] =
     useState<ChartRangeKey>(DEFAULT_CHART_RANGE_KEY);
   const activeRequestController = useRef<AbortController | null>(null);
+  const {
+    catalogState,
+    modelCatalog,
+    errorMessage: modelCatalogErrorMessage,
+    selectedModelId,
+    setSelectedModelId,
+    reloadCatalog,
+  } = useModelCatalog();
 
   useEffect(() => () => activeRequestController.current?.abort(), []);
 
@@ -64,6 +84,7 @@ function AnalysisView() {
     try {
       const finalResult = await streamGoldAnalysis(
         selectedPeriod,
+        selectedModelId,
         {
           onStatusEvent: (agentEvent) =>
             setAgentEvents((currentEvents) => [...currentEvents, agentEvent]),
@@ -87,6 +108,7 @@ function AnalysisView() {
   };
 
   const isRunning = analysisState === "running";
+  const canAnalyze = !isRunning && selectedModelId !== "";
   const selectedPeriodLabel =
     PERIOD_OPTIONS.find((option) => option.value === analysisResult?.request.period)?.label ??
     analysisResult?.request.period ??
@@ -112,23 +134,35 @@ function AnalysisView() {
   return (
     <>
       <section className="panel controls" aria-label="Analysis settings">
-        <div role="radiogroup" aria-label="Historical period" className="period-picker">
-          {PERIOD_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              role="radio"
-              aria-checked={selectedPeriod === option.value}
-              className="period-option"
-              onClick={() => setSelectedPeriod(option.value)}
-              disabled={isRunning}
-            >
-              {option.label}
-            </button>
-          ))}
+        <div className="control-groups">
+          <div role="radiogroup" aria-label="Historical period" className="period-picker">
+            {PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={selectedPeriod === option.value}
+                className="period-option"
+                onClick={() => setSelectedPeriod(option.value)}
+                disabled={isRunning}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <ModelSelector
+            catalogState={catalogState}
+            modelCatalog={modelCatalog}
+            errorMessage={modelCatalogErrorMessage}
+            selectedModelId={selectedModelId}
+            onSelectModel={setSelectedModelId}
+            onReload={reloadCatalog}
+            disabled={isRunning}
+          />
         </div>
 
-        <button type="button" className="primary-button" onClick={runAnalysis} disabled={isRunning}>
+        <button type="button" className="primary-button" onClick={runAnalysis} disabled={!canAnalyze}>
           {isRunning ? "Analyzing…" : `Analyze`}
         </button>
       </section>
