@@ -58,11 +58,29 @@ export type ForecastModelDetails = {
   backtest: BacktestSummary | null;
 };
 
+/**
+ * Retail versions of the INR-per-gram forecast outputs. Points line up with
+ * the original points by step number and history points by date.
+ */
+export type ForecastRetailView = {
+  retail_charge_pct: number;
+  multiplier: number;
+  forecast_points: { step: number; date: string; gold_inr_per_gram: number; lower: number; upper: number }[];
+  history_points: { date: string; gold_inr_per_gram: number }[];
+  end_of_horizon: EndOfHorizonSummary;
+  latest_value: number;
+};
+
 export type ForecastResult = {
   status: "success";
   run_id: string;
   generated_at: string;
-  request: { horizon_weeks: number; frequency: ForecastFrequency; history_period: string };
+  request: {
+    horizon_weeks: number;
+    frequency: ForecastFrequency;
+    history_period: string;
+    retail_charge_pct: number;
+  };
   data_summary: {
     history_period_requested: string;
     aligned_daily_observations: number;
@@ -83,6 +101,7 @@ export type ForecastResult = {
     end_of_horizon: Record<ForecastSeriesKey, EndOfHorizonSummary>;
   };
   history: { points: HistoryPoint[] };
+  retail: ForecastRetailView;
   model: ForecastModelDetails;
   warnings: string[];
   metadata: RunMetadata;

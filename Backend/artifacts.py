@@ -24,6 +24,8 @@ FILENAME_GOLD_USD_PER_GRAM = "gold_usd_per_gram.csv"
 FILENAME_USD_INR = "usd_inr.csv"
 FILENAME_GOLD_INR_PER_OUNCE = "gold_inr_per_ounce.csv"
 FILENAME_GOLD_INR_PER_GRAM = "gold_inr_per_gram.csv"
+FILENAME_GOLD_INR_PER_OUNCE_RETAIL = "gold_inr_per_ounce_retail.csv"
+FILENAME_GOLD_INR_PER_GRAM_RETAIL = "gold_inr_per_gram_retail.csv"
 FILENAME_ANALYSIS_REPORT = "analysis.txt"
 
 ARTIFACT_FILENAME_ORDER = [
@@ -32,6 +34,8 @@ ARTIFACT_FILENAME_ORDER = [
     FILENAME_USD_INR,
     FILENAME_GOLD_INR_PER_OUNCE,
     FILENAME_GOLD_INR_PER_GRAM,
+    FILENAME_GOLD_INR_PER_OUNCE_RETAIL,
+    FILENAME_GOLD_INR_PER_GRAM_RETAIL,
     FILENAME_ANALYSIS_REPORT,
 ]
 
@@ -183,6 +187,47 @@ def build_gold_inr_per_gram_artifact(
     )
 
 
+def build_gold_inr_per_ounce_retail_artifact(
+    retail_data: Mapping[str, Any],
+    retail_charge_pct: float,
+) -> ArtifactFile:
+    return _build_csv_artifact(
+        filename=FILENAME_GOLD_INR_PER_OUNCE_RETAIL,
+        description=(
+            "Gold in INR per troy ounce with the "
+            f"{retail_charge_pct:g} percent retail charge added. The USD "
+            "price and exchange rate are the original market values."
+        ),
+        column_names=[
+            "date",
+            "gold_usd_per_ounce",
+            "inr_per_usd",
+            "gold_inr_per_ounce",
+        ],
+        rows=retail_data["gold_inr_per_ounce"],
+    )
+
+
+def build_gold_inr_per_gram_retail_artifact(
+    retail_data: Mapping[str, Any],
+    retail_charge_pct: float,
+) -> ArtifactFile:
+    return _build_csv_artifact(
+        filename=FILENAME_GOLD_INR_PER_GRAM_RETAIL,
+        description=(
+            "Gold in INR per gram with the "
+            f"{retail_charge_pct:g} percent retail charge added. The "
+            "retail statistics in analysis.txt are calculated from this."
+        ),
+        column_names=[
+            "date",
+            "gold_inr_per_ounce",
+            "gold_inr_per_gram",
+        ],
+        rows=retail_data["gold_inr_per_gram"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Text report
 # ---------------------------------------------------------------------------
@@ -203,6 +248,10 @@ def build_analysis_report_artifact(
     analysis: Mapping[str, Any],
     dataset_metadata: Mapping[str, Mapping[str, Any]] | None,
     interpretation: str | None,
+    retail_charge_pct: float | None = None,
+    retail_analysis: Mapping[str, Any] | None = None,
+    retail_dataset_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+    retail_interpretation: str | None = None,
 ) -> ArtifactFile:
     lines: list[str] = [
         "GOLDINFO ANALYSIS REPORT",
@@ -249,13 +298,44 @@ def build_analysis_report_artifact(
 
     lines += [
         "",
-        "MODEL INTERPRETATION",
-        "--------------------",
+        "MODEL INTERPRETATION (ORIGINAL)",
+        "-------------------------------",
         interpretation
         if interpretation
         else "Not generated yet for this report.",
         "",
     ]
+
+    if retail_analysis is not None:
+        lines += [
+            "RETAIL VIEW",
+            "===========",
+            f"A flat {retail_charge_pct:g} percent retail charge is added to "
+            "every INR price. Percentage changes are the same as in the "
+            "original view; only rupee prices differ.",
+            "",
+        ]
+        for dataset in (retail_dataset_metadata or {}).values():
+            lines += [
+                str(dataset.get("name", "Dataset")),
+                f"  unit: {dataset.get('unit')}",
+            ]
+        lines += [
+            "",
+            "CALCULATED STATISTICS, RETAIL (INR per gram)",
+            "--------------------------------------------",
+        ]
+        for name, value in retail_analysis.items():
+            lines.append(f"{name}: {_format_report_value(value)}")
+        lines += [
+            "",
+            "MODEL INTERPRETATION (RETAIL)",
+            "-----------------------------",
+            retail_interpretation
+            if retail_interpretation
+            else "Not generated yet for this report.",
+            "",
+        ]
 
     return {
         "filename": FILENAME_ANALYSIS_REPORT,
@@ -303,6 +383,8 @@ ARTIFACT_FILENAME_ORDER += [
     "forecast_weekly.csv",
     "forecast_training_daily.csv",
     "forecast_daily.csv",
+    "forecast_retail_weekly.csv",
+    "forecast_retail_daily.csv",
     FILENAME_FORECAST_REPORT,
 ]
 
@@ -357,6 +439,41 @@ def build_forecast_points_artifact(
     )
 
 
+def build_forecast_retail_artifact(
+    retail_view: Mapping[str, Any],
+    gram_key: str,
+    interval_level: float,
+    frequency: str,
+) -> ArtifactFile:
+    rows = [
+        {
+            "step": point["step"],
+            "date": point["date"],
+            gram_key: point[gram_key],
+            f"{gram_key}_lower": point["lower"],
+            f"{gram_key}_upper": point["upper"],
+        }
+        for point in retail_view["forecast_points"]
+    ]
+
+    return _build_csv_artifact(
+        filename=f"forecast_retail_{frequency}.csv",
+        description=(
+            f"{frequency.capitalize()} forecast of gold in INR per gram with "
+            f"the {retail_view['retail_charge_pct']:g} percent retail charge "
+            f"added ({int(interval_level * 100)} percent interval)."
+        ),
+        column_names=[
+            "step",
+            "date",
+            gram_key,
+            f"{gram_key}_lower",
+            f"{gram_key}_upper",
+        ],
+        rows=rows,
+    )
+
+
 def _append_mapping_lines(
     lines: list[str], values: Mapping[str, Any], indent: str = ""
 ) -> None:
@@ -376,6 +493,7 @@ def build_forecast_report_artifact(
     end_of_horizon: Mapping[str, Mapping[str, Any]],
     model_details: Mapping[str, Any],
     warnings: list[str],
+    retail_view: Mapping[str, Any] | None = None,
 ) -> ArtifactFile:
     lines: list[str] = [
         "GOLDINFO FORECAST REPORT",
@@ -393,6 +511,15 @@ def build_forecast_report_artifact(
 
     lines += ["", "FORECAST AT END OF HORIZON", "--------------------------"]
     _append_mapping_lines(lines, end_of_horizon)
+
+    if retail_view is not None:
+        lines += [
+            "",
+            "FORECAST AT END OF HORIZON, RETAIL (INR per gram)",
+            "-------------------------------------------------",
+            f"retail_charge_pct: {retail_view['retail_charge_pct']:g}",
+        ]
+        _append_mapping_lines(lines, retail_view["end_of_horizon"])
 
     lines += [
         "",
@@ -449,22 +576,37 @@ def build_forecast_report_artifact(
 # ---------------------------------------------------------------------------
 
 FILENAME_SAVINGS_TIMELINE = "savings_timeline.csv"
+FILENAME_SAVINGS_TIMELINE_RETAIL = "savings_timeline_retail.csv"
 FILENAME_SAVINGS_REPORT = "savings_report.txt"
 
 ARTIFACT_FILENAME_ORDER += [
     FILENAME_SAVINGS_TIMELINE,
+    FILENAME_SAVINGS_TIMELINE_RETAIL,
     FILENAME_SAVINGS_REPORT,
 ]
 
 
 def build_savings_timeline_artifact(
     timeline_rows: list[dict[str, Any]],
+    view_name: str = "original",
 ) -> ArtifactFile:
+    is_retail = view_name == "retail"
     return _build_csv_artifact(
-        filename=FILENAME_SAVINGS_TIMELINE,
+        filename=(
+            FILENAME_SAVINGS_TIMELINE_RETAIL
+            if is_retail
+            else FILENAME_SAVINGS_TIMELINE
+        ),
         description=(
             "Daily value in INR of the gold holding and of the INR savings "
-            "balance, from the purchase date to the latest observation."
+            "balance, from the purchase date to the latest observation. "
+            + (
+                "Retail view: the gold was bought at the retail price and "
+                "is valued at the original price."
+                if is_retail
+                else "Original view: gold bought and valued at the "
+                "converted price."
+            )
         ),
         column_names=[
             "date",
@@ -480,10 +622,7 @@ def build_savings_report_artifact(
     *,
     run_id: str,
     request_parameters: Mapping[str, Any],
-    summary: Mapping[str, Any],
-    currency_effect: Mapping[str, Any],
-    calendar_years: list[Mapping[str, Any]],
-    holding_period_outcomes: list[Mapping[str, Any]],
+    views: Mapping[str, Mapping[str, Any]],
     warnings: list[str],
 ) -> ArtifactFile:
     lines: list[str] = [
@@ -497,31 +636,35 @@ def build_savings_report_artifact(
     ]
     _append_mapping_lines(lines, request_parameters)
 
-    lines += ["", "SUMMARY", "-------"]
-    _append_mapping_lines(lines, summary)
+    for view_name, view in views.items():
+        heading = f"{view_name.upper()} VIEW"
+        lines += ["", heading, "=" * len(heading)]
 
-    lines += ["", "GOLD IN RUPEES VERSUS DOLLARS", "-----------------------------"]
-    _append_mapping_lines(lines, currency_effect)
+        lines += ["", "SUMMARY", "-------"]
+        _append_mapping_lines(lines, view["summary"])
 
-    lines += ["", "CALENDAR YEARS", "--------------"]
-    for year_row in calendar_years:
-        partial_note = " (partial year)" if year_row["is_partial_year"] else ""
-        lines.append(
-            f"{year_row['year']}{partial_note}: gold "
-            f"{_format_report_value(year_row['gold_change_pct'])}%, savings "
-            f"{_format_report_value(year_row['inr_savings_change_pct'])}%"
-        )
+        lines += ["", "GOLD IN RUPEES VERSUS DOLLARS", "-----------------------------"]
+        _append_mapping_lines(lines, view["currency_effect"])
 
-    lines += ["", "ROLLING HOLDING PERIODS", "-----------------------"]
-    if not holding_period_outcomes:
-        lines.append("The selected range is shorter than every window.")
-    for outcome in holding_period_outcomes:
-        lines.append(f"{outcome['years']} years:")
-        _append_mapping_lines(
-            lines,
-            {name: value for name, value in outcome.items() if name != "years"},
-            indent="  ",
-        )
+        lines += ["", "CALENDAR YEARS", "--------------"]
+        for year_row in view["calendar_years"]:
+            partial_note = " (partial year)" if year_row["is_partial_year"] else ""
+            lines.append(
+                f"{year_row['year']}{partial_note}: gold "
+                f"{_format_report_value(year_row['gold_change_pct'])}%, savings "
+                f"{_format_report_value(year_row['inr_savings_change_pct'])}%"
+            )
+
+        lines += ["", "ROLLING HOLDING PERIODS", "-----------------------"]
+        if not view["holding_period_outcomes"]:
+            lines.append("The selected range is shorter than every window.")
+        for outcome in view["holding_period_outcomes"]:
+            lines.append(f"{outcome['years']} years:")
+            _append_mapping_lines(
+                lines,
+                {name: value for name, value in outcome.items() if name != "years"},
+                indent="  ",
+            )
 
     lines += ["", "WARNINGS AND CAVEATS", "--------------------"]
     lines += [f"- {warning}" for warning in warnings]
@@ -531,8 +674,8 @@ def build_savings_report_artifact(
         "filename": FILENAME_SAVINGS_REPORT,
         "media_type": TEXT_MEDIA_TYPE,
         "description": (
-            "Inputs, results for gold and INR savings, calendar-year and "
-            "rolling-window statistics, and caveats."
+            "Inputs, then for the original and the retail view: results, "
+            "calendar-year and rolling-window statistics. Caveats at the end."
         ),
         "row_count": None,
         "content": "\n".join(lines),

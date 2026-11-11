@@ -4,6 +4,8 @@ import AnalysisView from "./views/AnalysisView";
 import { GOLD_LABEL } from "./config/displayLabels";
 import ForecastView from "./views/ForecastView";
 import SavingsView from "./views/SavingsView";
+import { RetailPricingControls } from "./components/layout/RetailPricingControls";
+import { RetailPricingProvider } from "./context/RetailPricingProvider";
 
 type ActiveView = "analysis" | "forecast" | "savings";
 
@@ -17,11 +19,15 @@ function App() {
   const [activeView, setActiveView] = useState<ActiveView>("analysis");
 
   return (
+    <RetailPricingProvider>
     <main className="app">
       <div className="container">
-        <header className="page-header">
-          <h1>GoldInfo</h1>
-          <p>{GOLD_LABEL} price analysis, forecasting and savings comparison, run locally.</p>
+        <header className="page-header page-header-row">
+          <div>
+            <h1>GoldInfo</h1>
+            <p>{GOLD_LABEL} price analysis, forecasting and savings comparison, run locally.</p>
+          </div>
+          <RetailPricingControls />
         </header>
 
         <div className="tab-list view-tabs" role="tablist" aria-label="Views">
@@ -71,6 +77,7 @@ function App() {
         </div>
       </div>
     </main>
+    </RetailPricingProvider>
   );
 }
 

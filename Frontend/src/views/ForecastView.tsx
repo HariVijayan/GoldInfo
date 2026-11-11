@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ForecastDashboard } from "../components/forecast/ForecastDashboard";
 import { ForecastTable } from "../components/forecast/ForecastTable";
+import { PriceViewBanner } from "../components/common/PriceViewBanner";
 import { MetadataPanel, type RunDetailItem } from "../components/common/MetadataPanel";
 import { GOLD_LABEL, INR_LABEL } from "../config/displayLabels";
 import {
@@ -11,6 +12,8 @@ import {
   FORECAST_FREQUENCY_OPTIONS,
   FORECAST_HORIZON_OPTIONS,
 } from "../config/forecastConfig";
+import { useRerunOnRetailChargeChange } from "../hooks/useRerunOnRetailChargeChange";
+import { useRetailPricing } from "../hooks/useRetailPricing";
 import { ForecastRequestError, requestForecast } from "../services/forecastClient";
 import type { ArtifactFile } from "../types/analysisTypes";
 import type {
@@ -20,12 +23,14 @@ import type {
   ForecastState,
 } from "../types/forecastTypes";
 import { formatLongDate } from "../utils/chartDates";
+import { applyForecastPriceView } from "../utils/priceViewSelectors";
 
 function buildRunDetails(forecastResult: ForecastResult): RunDetailItem[] {
   return [
     { label: "Run ID", value: forecastResult.run_id },
     { label: "Generated at", value: forecastResult.generated_at },
     { label: "Horizon", value: `${forecastResult.forecast.horizon_weeks} weeks` },
+    { label: "Retail charge", value: `${forecastResult.request.retail_charge_pct}%` },
     { label: "Detail", value: forecastResult.forecast.frequency },
     {
       label: "Range level",
@@ -62,6 +67,7 @@ function ForecastView() {
   const [errorMessage, setErrorMessage] = useState("");
   const [artifactFiles, setArtifactFiles] = useState<ArtifactFile[]>([]);
   const activeRequestController = useRef<AbortController | null>(null);
+  const { retailChargePct, priceView } = useRetailPricing();
 
   useEffect(() => () => activeRequestController.current?.abort(), []);
 
@@ -76,7 +82,12 @@ function ForecastView() {
     setArtifactFiles([]);
 
     try {
-      const result = await requestForecast(horizonWeeks, frequency, requestController.signal);
+      const result = await requestForecast(
+        horizonWeeks,
+        frequency,
+        retailChargePct,
+        requestController.signal
+      );
       setForecastResult(result);
       setArtifactFiles(result.metadata?.files ?? []);
       setForecastState("success");
@@ -93,6 +104,18 @@ function ForecastView() {
   };
 
   const isRunning = forecastState === "running";
+
+  // The server sends both views; this only picks the one to show.
+  const displayedResult = useMemo(
+    () => (forecastResult ? applyForecastPriceView(forecastResult, priceView) : null),
+    [forecastResult, priceView]
+  );
+
+  useRerunOnRetailChargeChange(
+    retailChargePct,
+    forecastState === "success" || forecastState === "running",
+    runForecast
+  );
 
   return (
     <>
@@ -169,10 +192,15 @@ function ForecastView() {
         </section>
       )}
 
-      {forecastState === "success" && forecastResult && (
+      {forecastState === "success" && displayedResult && forecastResult && (
         <>
+          <PriceViewBanner
+            priceView={priceView}
+            retailChargePct={forecastResult.retail.retail_charge_pct}
+            retailDescription="INR per gram prices, ranges, and history include the retail charge. Percentage changes, USD prices, and USD/INR are unchanged."
+          />
           <ForecastDashboard
-            forecastResult={forecastResult}
+            forecastResult={displayedResult}
             selectedSeriesKey={selectedSeriesKey}
             onSelectSeries={setSelectedSeriesKey}
             historyWeeksShown={historyWeeksShown}
@@ -180,8 +208,8 @@ function ForecastView() {
           />
 
           <ForecastTable
-            forecastPoints={forecastResult.forecast.points}
-            frequency={forecastResult.forecast.frequency}
+            forecastPoints={displayedResult.forecast.points}
+            frequency={displayedResult.forecast.frequency}
           />
         </>
       )}

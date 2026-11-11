@@ -1,9 +1,11 @@
 import type { RunMetadata } from "./analysisTypes";
+import type { PriceView } from "./retailPricingTypes";
 
 export type CompoundingMode = "simple" | "monthly" | "quarterly" | "half_yearly" | "yearly";
 
 /** What the form hands to the API client, already parsed and checked. */
 export type SavingsRequestParams = {
+  retailChargePct: number;
   /** Null means the oldest date with data. */
   startDate: string | null;
   goldGrams: number;
@@ -26,8 +28,11 @@ export type DatedValue = { date: string; value: number };
 
 export type GoldHoldingSummary = {
   grams: number;
+  /** Price paid per gram. In the retail view it includes the retail charge. */
   start_price_per_gram: number;
+  /** Price the holding is valued at: always the original price. */
   end_price_per_gram: number;
+  purchase_charge_pct: number;
   invested_inr: number;
   current_value_inr: number;
   gain_inr: number;
@@ -80,6 +85,8 @@ export type CurrencyEffect = {
   end_inr_per_usd: number;
   gold_usd_change_pct: number | null;
   usd_inr_change_pct: number | null;
+  /** The one-off cost of paying the retail charge. Zero in the original view. */
+  retail_cost_effect_pct: number | null;
   gold_inr_change_pct: number | null;
 };
 
@@ -110,6 +117,15 @@ export type SavingsTimelinePoint = {
   inr_value: number;
 };
 
+/** Everything that depends on how the gold is priced. */
+export type SavingsViewData = {
+  summary: SavingsSummary;
+  currency_effect: CurrencyEffect;
+  calendar_years: CalendarYearRow[];
+  holding_period_outcomes: HoldingPeriodOutcome[];
+  timeline: { points: SavingsTimelinePoint[] };
+};
+
 export type SavingsResult = {
   status: "success";
   run_id: string;
@@ -119,17 +135,15 @@ export type SavingsResult = {
     effective_start_date: string;
     end_date: string;
     gold_grams: number;
-    inr_savings_amount: number;
+    /** Null when the savings were matched to each view's gold cost. */
+    inr_savings_amount: number | null;
     inr_principal_source: "matched_to_gold_cost" | "user_provided";
     annual_interest_rate_pct: number;
     compounding: CompoundingMode;
+    retail_charge_pct: number;
   };
   data_range: Omit<SavingsDataRange, "status">;
-  summary: SavingsSummary;
-  currency_effect: CurrencyEffect;
-  calendar_years: CalendarYearRow[];
-  holding_period_outcomes: HoldingPeriodOutcome[];
-  timeline: { points: SavingsTimelinePoint[] };
+  views: Record<PriceView, SavingsViewData>;
   warnings: string[];
   metadata: RunMetadata;
 };

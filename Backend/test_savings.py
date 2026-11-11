@@ -8,6 +8,7 @@ parser.add_argument("--start-date", help="YYYY-MM-DD. Defaults to the oldest dat
 parser.add_argument("--gold-grams", type=float, default=1.0)
 parser.add_argument("--inr-amount", type=float, help="Defaults to the gold's cost.")
 parser.add_argument("--rate", type=float, default=6.5, help="Percent a year.")
+parser.add_argument("--retail-charge", type=float, default=15.0, help="Percent.")
 parser.add_argument(
     "--compounding",
     choices=["simple", "monthly", "quarterly", "half_yearly", "yearly"],
@@ -23,6 +24,7 @@ response = requests.post(
         "inr_savings_amount": args.inr_amount,
         "annual_interest_rate_pct": args.rate,
         "compounding": args.compounding,
+        "retail_charge_pct": args.retail_charge,
     },
     timeout=300,
 )
@@ -32,14 +34,16 @@ if response.status_code != 200:
     print(f"HTTP {response.status_code}: {body.get('message')}")
     raise SystemExit(1)
 
-summary = body["summary"]
 print(f"Run {body['run_id']}")
 print(
     f"{body['request']['effective_start_date']} to {body['request']['end_date']} "
-    f"({summary['holding_years']:.1f} years)"
+    f"(retail charge {body['request']['retail_charge_pct']}%)"
 )
-print(json.dumps(summary["gold"], indent=2))
-print(json.dumps(summary["inr_savings"], indent=2))
-print(json.dumps(summary["comparison"], indent=2))
+for view_name, view in body["views"].items():
+    summary = view["summary"]
+    print(f"\n=== {view_name.upper()} ({summary['holding_years']:.1f} years) ===")
+    print(json.dumps(summary["gold"], indent=2))
+    print(json.dumps(summary["inr_savings"], indent=2))
+    print(json.dumps(summary["comparison"], indent=2))
 for warning in body["warnings"][:3]:
     print(f"- {warning}")

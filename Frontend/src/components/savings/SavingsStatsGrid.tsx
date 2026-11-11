@@ -1,4 +1,4 @@
-import type { SavingsResult } from "../../types/savingsTypes";
+import type { SavingsViewedResult } from "../../utils/priceViewSelectors";
 import { formatLongDate } from "../../utils/chartDates";
 import { formatRupees, formatShare, getChangeTone } from "../../utils/formatters";
 import {
@@ -10,7 +10,7 @@ import {
 } from "../../utils/savingsFormatters";
 import { MetricCard } from "../common/MetricCard";
 
-export function SavingsStatsGrid({ savingsResult }: { savingsResult: SavingsResult }) {
+export function SavingsStatsGrid({ savingsResult }: { savingsResult: SavingsViewedResult }) {
   const { summary } = savingsResult;
   const { gold, inr_savings: savings, comparison } = summary;
 

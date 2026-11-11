@@ -1,10 +1,11 @@
 import { GOLD_LABEL } from "../../config/displayLabels";
-import type { SavingsResult } from "../../types/savingsTypes";
+import type { SavingsViewedResult } from "../../utils/priceViewSelectors";
 import { formatLongDate } from "../../utils/chartDates";
 import { formatRupees, getChangeTone } from "../../utils/formatters";
 import {
   describeInterest,
   formatGrams,
+  formatPlainNumber,
   formatRate,
   formatSignedPercent,
   formatYears,
@@ -14,16 +15,18 @@ type HoldingCardProps = {
   label: string;
   value: string;
   startLine: string;
+  noteLine?: string;
   changePct: number | null;
   cagrPct: number | null;
 };
 
-function HoldingCard({ label, value, startLine, changePct, cagrPct }: HoldingCardProps) {
+function HoldingCard({ label, value, startLine, noteLine, changePct, cagrPct }: HoldingCardProps) {
   return (
     <article className="savings-card">
       <h3>{label}</h3>
       <p className="savings-card-value">{value}</p>
       <p className="savings-card-start">{startLine}</p>
+      {noteLine && <p className="savings-card-start">{noteLine}</p>}
       <p className={`savings-card-change tone-${getChangeTone(changePct)}`}>
         {formatSignedPercent(changePct)} <small>({formatRate(cagrPct)} a year)</small>
       </p>
@@ -31,7 +34,7 @@ function HoldingCard({ label, value, startLine, changePct, cagrPct }: HoldingCar
   );
 }
 
-function describeVerdict(savingsResult: SavingsResult): { text: string; tone: string } {
+function describeVerdict(savingsResult: SavingsViewedResult): { text: string; tone: string } {
   const { comparison } = savingsResult.summary;
   const gapText = Math.abs(comparison.change_gap_points ?? 0).toLocaleString("en-IN", {
     maximumFractionDigits: 1,
@@ -43,9 +46,10 @@ function describeVerdict(savingsResult: SavingsResult): { text: string; tone: st
     : { text: `Savings finished ahead by ${gapText} percentage points.`, tone: "negative" };
 }
 
-export function SavingsHero({ savingsResult }: { savingsResult: SavingsResult }) {
+export function SavingsHero({ savingsResult }: { savingsResult: SavingsViewedResult }) {
   const { summary, request } = savingsResult;
   const verdict = describeVerdict(savingsResult);
+  const paidRetail = summary.gold.purchase_charge_pct > 0;
 
   return (
     <section className="panel savings-hero" aria-label="Result">
@@ -58,7 +62,12 @@ export function SavingsHero({ savingsResult }: { savingsResult: SavingsResult })
         <HoldingCard
           label={`${GOLD_LABEL}, ${formatGrams(summary.gold.grams)} g`}
           value={formatRupees(summary.gold.current_value_inr)}
-          startLine={`Bought for ${formatRupees(summary.gold.invested_inr)}`}
+          startLine={`Bought for ${formatRupees(summary.gold.invested_inr)}${
+            paidRetail ? ` (retail, +${formatPlainNumber(summary.gold.purchase_charge_pct)}%)` : ""
+          }`}
+          noteLine={
+            paidRetail ? `Valued at the original price, ${formatRupees(summary.gold.end_price_per_gram)} a gram` : undefined
+          }
           changePct={summary.gold.change_pct}
           cagrPct={summary.gold.cagr_pct}
         />

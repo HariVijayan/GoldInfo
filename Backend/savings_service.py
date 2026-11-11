@@ -27,6 +27,14 @@ from market_history_cache import (
     MarketHistoryUnavailableError,
     get_aligned_market_history,
 )
+from retail_pricing import (
+    DEFAULT_RETAIL_CHARGE_PCT,
+    VIEW_ORIGINAL,
+    VIEW_RETAIL,
+    format_charge_label,
+    retail_multiplier,
+    validate_retail_charge_pct,
+)
 from savings_calculations import (
     GOLD_PRICE_COLUMN,
     GOLD_VALUE_COLUMN,
@@ -64,21 +72,31 @@ TIE_TOLERANCE_PERCENTAGE_POINTS = 0.005
 TIMELINE_PRICE_DECIMALS = 4
 TIMELINE_VALUE_DECIMALS = 2
 
-STATIC_CAVEATS = [
-    "Gold is priced from COMEX gold futures (GC=F) converted to rupees at "
-    "the market USD/INR rate. This is an international reference price, "
-    "not a jeweller's or bank's rate. Indian buyers also pay import duty, "
-    "GST, making charges, and a dealer spread, none of which are included.",
-    "The savings balance uses one flat interest rate for the whole "
-    "period. Real bank rates changed many times between 2004 and today, "
-    "and interest income may be taxable. Taxes are not modelled.",
-    "Neither holding is adjusted for inflation. Both figures are in "
-    "nominal rupees.",
-    "Rolling holding-period windows overlap, so their counts describe how "
-    "outcomes varied with the start date, not independent trials.",
-    "This is a look at the past. It does not predict future returns and "
-    "is not financial advice.",
-]
+def build_static_caveats(retail_charge_pct: float) -> list[str]:
+    charge_label = format_charge_label(retail_charge_pct)
+    day_one_loss_pct = (1 - 1 / retail_multiplier(retail_charge_pct)) * 100
+
+    return [
+        "Gold is priced from COMEX gold futures (GC=F) converted to rupees "
+        "at the market USD/INR rate. The Original view uses that "
+        "international reference price for buying and selling.",
+        f"The Retail view assumes the gold is bought at that price plus a "
+        f"flat {charge_label}% (import duty, GST, making charges, dealer "
+        "spread) and valued at the original price, because a buyer-back "
+        f"pays roughly the market rate. The gold is therefore worth "
+        f"{day_one_loss_pct:.1f}% less than its cost on day one. Real "
+        "charges vary by shop, season, and offers.",
+        "The savings balance uses one flat interest rate for the whole "
+        "period. Real bank rates changed many times between 2004 and "
+        "today, and interest income may be taxable. Taxes are not "
+        "modelled.",
+        "Neither holding is adjusted for inflation. Both figures are in "
+        "nominal rupees.",
+        "Rolling holding-period windows overlap, so their counts describe "
+        "how outcomes varied with the start date, not independent trials.",
+        "This is a look at the past. It does not predict future returns "
+        "and is not financial advice.",
+    ]
 
 
 class SavingsError(Exception):
@@ -193,23 +211,29 @@ def _find_start_position(
 
 def _build_summary(
     *,
-    window_frame: pd.DataFrame,
     timeline: pd.DataFrame,
     gold_grams: float,
+    gold_cost: float,
     inr_principal: float,
     annual_rate: float,
     compounding: str,
     holding_years: float,
     holding_days: int,
+    purchase_cost_multiplier: float,
 ) -> dict[str, Any]:
-    start_price = float(timeline[GOLD_PRICE_COLUMN].iloc[0])
-    end_price = float(timeline[GOLD_PRICE_COLUMN].iloc[-1])
-    gold_cost = float(timeline[GOLD_VALUE_COLUMN].iloc[0])
+    market_start_price = float(timeline[GOLD_PRICE_COLUMN].iloc[0])
+    market_end_price = float(timeline[GOLD_PRICE_COLUMN].iloc[-1])
+    purchase_price = market_start_price * purchase_cost_multiplier
     gold_final = float(timeline[GOLD_VALUE_COLUMN].iloc[-1])
     savings_final = float(timeline[INR_VALUE_COLUMN].iloc[-1])
 
-    gold_change = gold_final / gold_cost - 1.0
-    savings_change = savings_final / inr_principal - 1.0
+    # Growth multiples do not depend on how much was invested, so they are
+    # the fair basis when the two starting amounts differ.
+    gold_growth_multiple = gold_final / gold_cost
+    savings_growth_multiple = savings_final / inr_principal
+
+    gold_change = gold_growth_multiple - 1.0
+    savings_change = savings_growth_multiple - 1.0
     change_gap_points = (gold_change - savings_change) * 100
 
     if abs(change_gap_points) < TIE_TOLERANCE_PERCENTAGE_POINTS:
@@ -219,13 +243,11 @@ def _build_summary(
 
     gold_drawdown = calculate_max_drawdown(timeline[GOLD_VALUE_COLUMN])
 
-    # Growth multiples do not depend on how much was invested, so they are
-    # the fair basis when the two starting amounts differ.
-    gold_growth_multiple = gold_final / gold_cost
-    savings_growth_multiple = savings_final / inr_principal
-
-    gold_equivalent_grams_at_start = inr_principal / start_price
-    gold_equivalent_grams_now = savings_final / end_price
+    # What the savings could buy: always at the price a buyer pays.
+    gold_equivalent_grams_at_start = inr_principal / purchase_price
+    gold_equivalent_grams_now = savings_final / (
+        market_end_price * purchase_cost_multiplier
+    )
 
     return {
         "holding_days": holding_days,
@@ -233,8 +255,10 @@ def _build_summary(
         "same_budget": bool(np.isclose(gold_cost, inr_principal, rtol=1e-9)),
         "gold": {
             "grams": gold_grams,
-            "start_price_per_gram": start_price,
-            "end_price_per_gram": end_price,
+            # Price paid per gram, and the price the holding is valued at.
+            "start_price_per_gram": purchase_price,
+            "end_price_per_gram": market_end_price,
+            "purchase_charge_pct": (purchase_cost_multiplier - 1.0) * 100,
             "invested_inr": gold_cost,
             "current_value_inr": gold_final,
             "gain_inr": gold_final - gold_cost,
@@ -278,7 +302,7 @@ def _build_summary(
                 )
             ),
             "share_of_days_gold_ahead_pct": calculate_share_of_days_gold_ahead_pct(
-                timeline
+                timeline, gold_cost, inr_principal
             ),
             "gold_equivalent_grams_at_start": gold_equivalent_grams_at_start,
             "gold_equivalent_grams_now": gold_equivalent_grams_now,
@@ -308,6 +332,64 @@ def _build_timeline_rows(timeline: pd.DataFrame) -> list[dict[str, Any]]:
     ]
 
 
+def _build_view(
+    *,
+    window_frame: pd.DataFrame,
+    purchase_cost_multiplier: float,
+    gold_grams: float,
+    user_inr_amount: float | None,
+    annual_rate: float,
+    compounding: str,
+    holding_years: float,
+    holding_days: int,
+) -> dict[str, Any]:
+    """
+    One complete result. Gold is bought at the market price times the
+    purchase multiplier (1 for the original view) and always valued at the
+    market price, which is also what a seller would roughly receive.
+    """
+
+    market_prices = window_frame[GOLD_INR_PER_GRAM_COLUMN].to_numpy()
+    gold_cost = gold_grams * float(market_prices[0]) * purchase_cost_multiplier
+    inr_principal = gold_cost if user_inr_amount is None else user_inr_amount
+
+    timeline = build_value_timeline(
+        window_frame.index,
+        market_prices,
+        gold_grams,
+        inr_principal,
+        annual_rate,
+        compounding,
+    )
+
+    if not np.all(np.isfinite(timeline.to_numpy())):
+        raise SavingsError(
+            "The calculation produced non-finite values.", http_status_code=500
+        )
+
+    return {
+        "summary": _build_summary(
+            timeline=timeline,
+            gold_grams=gold_grams,
+            gold_cost=gold_cost,
+            inr_principal=inr_principal,
+            annual_rate=annual_rate,
+            compounding=compounding,
+            holding_years=holding_years,
+            holding_days=holding_days,
+            purchase_cost_multiplier=purchase_cost_multiplier,
+        ),
+        "currency_effect": decompose_currency_effect(
+            window_frame, purchase_cost_multiplier
+        ),
+        "calendar_years": build_calendar_year_rows(timeline, gold_cost),
+        "holding_period_outcomes": build_holding_period_outcomes(
+            timeline, annual_rate, compounding, purchase_cost_multiplier
+        ),
+        "timeline": {"points": _build_timeline_rows(timeline)},
+    }
+
+
 def _execute_savings_comparison(
     run_id: str,
     requested_start_date: date | None,
@@ -315,6 +397,7 @@ def _execute_savings_comparison(
     inr_savings_amount: float | None,
     annual_interest_rate_pct: float,
     compounding: str,
+    retail_charge_pct: float,
     artifact_files: dict[str, ArtifactFile],
 ) -> dict[str, Any]:
     _validate_inputs(
@@ -342,45 +425,28 @@ def _execute_savings_comparison(
     holding_years = holding_days / DAYS_PER_YEAR
     annual_rate = annual_interest_rate_pct / 100
 
-    gold_cost = gold_grams * float(window_frame[GOLD_INR_PER_GRAM_COLUMN].iloc[0])
-    if inr_savings_amount is None:
-        inr_principal = gold_cost
-        principal_source = "matched_to_gold_cost"
-    else:
-        inr_principal = inr_savings_amount
-        principal_source = "user_provided"
+    shared_arguments = {
+        "window_frame": window_frame,
+        "gold_grams": gold_grams,
+        "user_inr_amount": inr_savings_amount,
+        "annual_rate": annual_rate,
+        "compounding": compounding,
+        "holding_years": holding_years,
+        "holding_days": holding_days,
+    }
+    views = {
+        VIEW_ORIGINAL: _build_view(
+            purchase_cost_multiplier=1.0, **shared_arguments
+        ),
+        VIEW_RETAIL: _build_view(
+            purchase_cost_multiplier=retail_multiplier(retail_charge_pct),
+            **shared_arguments,
+        ),
+    }
 
-    timeline = build_value_timeline(
-        window_frame.index,
-        window_frame[GOLD_INR_PER_GRAM_COLUMN].to_numpy(),
-        gold_grams,
-        inr_principal,
-        annual_rate,
-        compounding,
-    )
-
-    if not np.all(np.isfinite(timeline.to_numpy())):
-        raise SavingsError(
-            "The calculation produced non-finite values.", http_status_code=500
-        )
-
-    summary = _build_summary(
-        window_frame=window_frame,
-        timeline=timeline,
-        gold_grams=gold_grams,
-        inr_principal=inr_principal,
-        annual_rate=annual_rate,
-        compounding=compounding,
-        holding_years=holding_years,
-        holding_days=holding_days,
-    )
-    currency_effect = decompose_currency_effect(window_frame)
-    calendar_years = build_calendar_year_rows(timeline)
-    holding_period_outcomes = build_holding_period_outcomes(
-        timeline, annual_rate, compounding
-    )
-
-    if principal_source == "user_provided" and not summary["same_budget"]:
+    if inr_savings_amount is not None and not all(
+        view["summary"]["same_budget"] for view in views.values()
+    ):
         warnings.append(
             "The gold purchase and the INR savings start from different "
             "amounts. The leader is decided by percentage growth, which "
@@ -393,9 +459,7 @@ def _execute_savings_comparison(
             "recent saved copy from "
             f"{history.fetched_at.isoformat(timespec='seconds')} was used.",
         )
-    warnings += STATIC_CAVEATS
-
-    timeline_rows = _build_timeline_rows(timeline)
+    warnings += build_static_caveats(retail_charge_pct)
 
     request_echo = {
         "requested_start_date": (
@@ -404,10 +468,16 @@ def _execute_savings_comparison(
         "effective_start_date": effective_start_date.date().isoformat(),
         "end_date": end_date.date().isoformat(),
         "gold_grams": gold_grams,
-        "inr_savings_amount": inr_principal,
-        "inr_principal_source": principal_source,
+        # None means each view matched the savings to its own gold cost.
+        "inr_savings_amount": inr_savings_amount,
+        "inr_principal_source": (
+            "matched_to_gold_cost"
+            if inr_savings_amount is None
+            else "user_provided"
+        ),
         "annual_interest_rate_pct": annual_interest_rate_pct,
         "compounding": compounding,
+        "retail_charge_pct": retail_charge_pct,
     }
     data_range = {
         "earliest_date": frame.index[0].date().isoformat(),
@@ -417,26 +487,29 @@ def _execute_savings_comparison(
         "is_stale": history.is_stale,
     }
 
-    for artifact in (
-        build_savings_timeline_artifact(timeline_rows),
-        build_savings_report_artifact(
-            run_id=run_id,
-            request_parameters=request_echo,
-            summary=summary,
-            currency_effect=currency_effect,
-            calendar_years=calendar_years,
-            holding_period_outcomes=holding_period_outcomes,
-            warnings=warnings,
-        ),
-    ):
-        artifact_files[artifact["filename"]] = artifact
+    for view_name, view in views.items():
+        timeline_artifact = build_savings_timeline_artifact(
+            view["timeline"]["points"], view_name
+        )
+        artifact_files[timeline_artifact["filename"]] = timeline_artifact
+
+    report_artifact = build_savings_report_artifact(
+        run_id=run_id,
+        request_parameters=request_echo,
+        views=views,
+        warnings=warnings,
+    )
+    artifact_files[report_artifact["filename"]] = report_artifact
 
     logger.info(
-        "run=%s savings comparison complete start=%s years=%.2f leader=%s",
+        "run=%s savings comparison complete start=%s years=%.2f "
+        "retail_charge=%s leader original=%s retail=%s",
         run_id,
         request_echo["effective_start_date"],
         holding_years,
-        summary["comparison"]["leader"],
+        retail_charge_pct,
+        views[VIEW_ORIGINAL]["summary"]["comparison"]["leader"],
+        views[VIEW_RETAIL]["summary"]["comparison"]["leader"],
     )
 
     return {
@@ -445,11 +518,7 @@ def _execute_savings_comparison(
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "request": request_echo,
         "data_range": data_range,
-        "summary": summary,
-        "currency_effect": currency_effect,
-        "calendar_years": calendar_years,
-        "holding_period_outcomes": holding_period_outcomes,
-        "timeline": {"points": timeline_rows},
+        "views": views,
         "warnings": warnings,
         "metadata": build_run_metadata(artifact_files),
     }
@@ -461,7 +530,13 @@ def run_savings_comparison(
     inr_savings_amount: float | None = None,
     annual_interest_rate_pct: float = DEFAULT_ANNUAL_INTEREST_RATE_PCT,
     compounding: str = DEFAULT_COMPOUNDING,
+    retail_charge_pct: float = DEFAULT_RETAIL_CHARGE_PCT,
 ) -> dict[str, Any]:
+    try:
+        retail_charge_pct = validate_retail_charge_pct(retail_charge_pct)
+    except ValueError as exc:
+        raise SavingsError(str(exc), http_status_code=422) from exc
+
     run_id = str(uuid4())
     artifact_files: dict[str, ArtifactFile] = {}
 
@@ -473,6 +548,7 @@ def run_savings_comparison(
             inr_savings_amount,
             annual_interest_rate_pct,
             compounding,
+            retail_charge_pct,
             artifact_files,
         )
     except SavingsError as exc:

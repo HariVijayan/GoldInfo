@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MetadataPanel, type RunDetailItem } from "../components/common/MetadataPanel";
+import { PriceViewBanner } from "../components/common/PriceViewBanner";
 import { SavingsControls } from "../components/savings/SavingsControls";
 import { SavingsDashboard } from "../components/savings/SavingsDashboard";
 import { GOLD_LABEL } from "../config/displayLabels";
 import { DEFAULT_SAVINGS_FORM_VALUES } from "../config/savingsConfig";
+import { useRerunOnRetailChargeChange } from "../hooks/useRerunOnRetailChargeChange";
+import { useRetailPricing } from "../hooks/useRetailPricing";
 import {
   fetchSavingsDataRange,
   requestSavingsComparison,
@@ -18,7 +21,8 @@ import type {
   SavingsState,
 } from "../types/savingsTypes";
 import { formatLongDate } from "../utils/chartDates";
-import { describeInterest, formatYears } from "../utils/savingsFormatters";
+import { selectSavingsView } from "../utils/priceViewSelectors";
+import { describeInterest, formatPlainNumber, formatYears } from "../utils/savingsFormatters";
 import { validateSavingsForm } from "../utils/savingsInputValidation";
 
 function buildRunDetails(savingsResult: SavingsResult): RunDetailItem[] {
@@ -34,7 +38,8 @@ function buildRunDetails(savingsResult: SavingsResult): RunDetailItem[] {
           : formatLongDate(request.effective_start_date),
     },
     { label: "Compared up to", value: formatLongDate(request.end_date) },
-    { label: "Holding period", value: formatYears(savingsResult.summary.holding_years) },
+    { label: "Holding period", value: formatYears(savingsResult.views.original.summary.holding_years) },
+    { label: "Retail charge", value: `${formatPlainNumber(request.retail_charge_pct)}%` },
     {
       label: "Savings amount",
       value:
@@ -66,6 +71,7 @@ function SavingsView() {
   const [errorMessage, setErrorMessage] = useState("");
   const [artifactFiles, setArtifactFiles] = useState<ArtifactFile[]>([]);
   const activeRequestController = useRef<AbortController | null>(null);
+  const { retailChargePct, priceView } = useRetailPricing();
 
   useEffect(() => () => activeRequestController.current?.abort(), []);
 
@@ -105,7 +111,7 @@ function SavingsView() {
   };
 
   const runComparison = async () => {
-    const formCheck = validateSavingsForm(formValues, dataRange);
+    const formCheck = validateSavingsForm(formValues, dataRange, retailChargePct);
     setFormErrors(formCheck.errors);
     if (formCheck.requestParams === null) return;
 
@@ -136,6 +142,18 @@ function SavingsView() {
   };
 
   const isRunning = savingsState === "running";
+
+  // The server sends both views; this only picks the one to show.
+  const displayedResult = useMemo(
+    () => (savingsResult ? selectSavingsView(savingsResult, priceView) : null),
+    [savingsResult, priceView]
+  );
+
+  useRerunOnRetailChargeChange(
+    retailChargePct,
+    savingsState === "success" || savingsState === "running",
+    runComparison
+  );
 
   return (
     <>
@@ -184,8 +202,17 @@ function SavingsView() {
         </section>
       )}
 
-      {savingsState === "success" && savingsResult && (
-        <SavingsDashboard savingsResult={savingsResult} />
+      {savingsState === "success" && savingsResult && displayedResult && (
+        <>
+          <PriceViewBanner
+            priceView={priceView}
+            retailChargePct={savingsResult.request.retail_charge_pct}
+            retailDescription={`Gold is bought at the retail price (+${formatPlainNumber(
+              savingsResult.request.retail_charge_pct
+            )}%) and valued at the original price, the way a buyer-back roughly pays. Savings without an amount start from the retail cost.`}
+          />
+          <SavingsDashboard savingsResult={displayedResult} />
+        </>
       )}
 
       {artifactFiles.length > 0 && (

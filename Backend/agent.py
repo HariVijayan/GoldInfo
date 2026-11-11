@@ -1,5 +1,6 @@
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable
 
@@ -10,7 +11,9 @@ from artifacts import (
     ArtifactFile,
     build_analysis_report_artifact,
     build_gold_inr_per_gram_artifact,
+    build_gold_inr_per_gram_retail_artifact,
     build_gold_inr_per_ounce_artifact,
+    build_gold_inr_per_ounce_retail_artifact,
     build_gold_usd_per_gram_artifact,
     build_gold_usd_per_ounce_artifact,
     build_run_metadata,
@@ -27,6 +30,20 @@ from model_pipelines import (
     RequestedToolCall,
     ToolCallTurn,
     resolve_pipeline,
+)
+
+from dual_interpretation import (
+    build_dual_interpretation_prompt,
+    build_single_view_prompt,
+    parse_dual_interpretation,
+)
+from retail_pricing import (
+    DEFAULT_RETAIL_CHARGE_PCT,
+    VIEW_ORIGINAL,
+    VIEW_RETAIL,
+    build_retail_gold_datasets,
+    retail_multiplier,
+    validate_retail_charge_pct,
 )
 
 logger = logging.getLogger("goldinfo.agent")
@@ -111,6 +128,8 @@ class AgentResult:
     processed_data: dict[str, Any]
     metadata: dict[str, Any]
     status: str
+    # Retail-priced twin of analysis, interpretation, and processed_data.
+    retail: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +177,9 @@ class AgentState:
     model_provider: str = ""
     model_supports_tool_calling: bool = False
 
+    # Flat percentage added to INR prices for the retail view
+    retail_charge_pct: float = DEFAULT_RETAIL_CHARGE_PCT
+
     # Explicit request parameters
     gold_ticker: str = "GC=F"
     fx_ticker: str = "INR=X"
@@ -173,6 +195,9 @@ class AgentState:
     converted_data: dict[str, Any] | None = None
     analysis: dict[str, Any] | None = None
     interpretation: str | None = None
+    retail_data: dict[str, Any] | None = None
+    retail_analysis: dict[str, Any] | None = None
+    retail_interpretation: str | None = None
 
     # Downloadable intermediate files, keyed by filename
     artifact_files: dict[str, ArtifactFile] = field(default_factory=dict)
@@ -202,6 +227,7 @@ class AgentState:
         return {
             "goal": self.goal,
             "period": self.period,
+            "retail_charge_pct": self.retail_charge_pct,
             "model": self.model_id,
             "model_provider": self.model_provider,
             "model_supports_tool_calling": (
@@ -266,6 +292,14 @@ def register_analysis_report(
             analysis=state.analysis,
             dataset_metadata=dataset_metadata,
             interpretation=interpretation,
+            retail_charge_pct=state.retail_charge_pct,
+            retail_analysis=state.retail_analysis,
+            retail_dataset_metadata=(
+                state.retail_data.get("metadata")
+                if state.retail_data
+                else None
+            ),
+            retail_interpretation=state.retail_interpretation,
         ),
         message=(
             "Updated analysis.txt with the model interpretation"
@@ -587,33 +621,79 @@ def execute_tool(
         )
 
         try:
-            analysis = analyze_gold_history(inr_per_gram)
+            retail_data = build_retail_gold_datasets(
+                converted_data, state.retail_charge_pct
+            )
+            analysis, retail_analysis = analyze_both_price_views(
+                inr_per_gram, retail_data["gold_inr_per_gram"]
+            )
         except Exception as exc:
             raise ToolExecutionError(
                 "analyze_gold_history failed while calculating "
                 f"INR-per-gram statistics. Original error: {exc}"
             ) from exc
 
-        if not isinstance(analysis, dict):
+        if not isinstance(analysis, dict) or not isinstance(
+            retail_analysis, dict
+        ):
             raise ToolExecutionError(
                 "analyze_gold_history returned an invalid result. "
                 "Expected a dictionary."
             )
 
         state.analysis = analysis
+        state.retail_data = retail_data
+        state.retail_analysis = retail_analysis
+
+        register_artifact(
+            state,
+            emit,
+            build_gold_inr_per_ounce_retail_artifact(
+                retail_data, state.retail_charge_pct
+            ),
+        )
+        register_artifact(
+            state,
+            emit,
+            build_gold_inr_per_gram_retail_artifact(
+                retail_data, state.retail_charge_pct
+            ),
+        )
 
         emit(
             create_event(
                 "SUCCESS",
-                "Historical INR-per-gram statistics calculated successfully",
+                "Historical INR-per-gram statistics calculated for the "
+                f"original and the retail (+{state.retail_charge_pct:g}%) "
+                "views",
             )
         )
 
         register_analysis_report(state, emit)
 
-        return analysis
+        return {
+            "original": analysis,
+            "retail": retail_analysis,
+            "retail_charge_pct": state.retail_charge_pct,
+        }
 
     raise ToolExecutionError(f"Unhandled tool '{tool_name}'.")
+
+
+def analyze_both_price_views(
+    original_gram_rows: list[dict[str, Any]],
+    retail_gram_rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the two independent analyses side by side."""
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        original_future = executor.submit(
+            analyze_gold_history, original_gram_rows
+        )
+        retail_future = executor.submit(
+            analyze_gold_history, retail_gram_rows
+        )
+        return original_future.result(), retail_future.result()
 
 
 # ---------------------------------------------------------------------------
@@ -788,6 +868,71 @@ def describe_unrequested_step(
     )
 
 
+def generate_interpretations(
+    pipeline: ModelPipeline,
+    messages: list[dict[str, Any]],
+    state: AgentState,
+    emit: EventHandler,
+) -> dict[str, str]:
+    """
+    Write both interpretations with a single model call.
+
+    If the model ignores the two-section format, each view is written by
+    its own call instead, so a weak model still produces a usable result.
+    """
+
+    assert state.analysis is not None and state.retail_analysis is not None
+
+    dual_messages = [
+        *messages,
+        {
+            "role": "user",
+            "content": build_dual_interpretation_prompt(
+                state.analysis,
+                state.retail_analysis,
+                state.retail_charge_pct,
+            ),
+        },
+    ]
+    model_text = generate_model_text(
+        pipeline,
+        dual_messages,
+        "while generating the original and retail interpretations",
+    )
+
+    parsed_sections = parse_dual_interpretation(model_text)
+    if parsed_sections is not None:
+        return parsed_sections
+
+    emit(
+        create_event(
+            "WARNING",
+            f"Model '{pipeline.model_id}' did not return both sections in "
+            "one answer. Requesting each interpretation separately.",
+        )
+    )
+
+    separate_interpretations: dict[str, str] = {}
+    for view_name, view_analysis in (
+        (VIEW_ORIGINAL, state.analysis),
+        (VIEW_RETAIL, state.retail_analysis),
+    ):
+        separate_interpretations[view_name] = generate_model_text(
+            pipeline,
+            [
+                *messages,
+                {
+                    "role": "user",
+                    "content": build_single_view_prompt(
+                        view_name, view_analysis, state.retail_charge_pct
+                    ),
+                },
+            ],
+            f"while generating the {view_name} interpretation",
+        )
+    return separate_interpretations
+
+
 # ---------------------------------------------------------------------------
 # Agent runtime
 # ---------------------------------------------------------------------------
@@ -797,8 +942,14 @@ def run_agent(
     period: str,
     event_handler: EventHandler | None = None,
     model_pipeline: ModelPipeline | None = None,
+    retail_charge_pct: float = DEFAULT_RETAIL_CHARGE_PCT,
 ) -> AgentResult:
     logger_for_cli = AgentLogger()
+
+    try:
+        retail_charge_pct = validate_retail_charge_pct(retail_charge_pct)
+    except ValueError as exc:
+        raise AgentError(str(exc)) from exc
 
     if event_handler is None:
         event_handler = logger_for_cli.handle
@@ -812,6 +963,7 @@ def run_agent(
     state = AgentState(
         goal=goal,
         period=period,
+        retail_charge_pct=retail_charge_pct,
         model_id=model_pipeline.model_id,
         model_provider=model_pipeline.provider,
         model_supports_tool_calling=model_pipeline.supports_tool_calling,
@@ -1036,36 +1188,13 @@ def _execute_agent_workflow(
         create_event(
             "MODEL",
             "Data retrieval, conversion, and statistical analysis "
-            "are complete. Requesting final interpretation from "
-            "the model.",
+            "are complete. Requesting both interpretations "
+            "(original and retail) from the model in one call.",
         )
     )
 
-    messages.append(
-        {
-            "role": "user",
-            "content": (
-                "The required Python data-processing workflow is now "
-                "complete.\n\n"
-                "The application retrieved gold futures and USD/INR "
-                "source data, aligned their observation dates, converted "
-                "the result to INR per gram, and calculated the historical "
-                "statistics.\n\n"
-                "Use the following calculated statistics as the "
-                "authoritative source for your final response:\n\n"
-                f"{json.dumps(state.analysis, indent=2)}\n\n"
-                "Provide a concise factual interpretation of the "
-                "historical gold price movement in INR per gram. "
-                "Mention the relevant period, recent movement, and "
-                "historical range position where useful. "
-                "Do not predict future prices and do not provide "
-                "investment advice."
-            ),
-        }
-    )
-
-    final_content = generate_model_text(
-        pipeline, messages, "while generating the final interpretation"
+    interpretations = generate_interpretations(
+        pipeline, messages, state, emit
     )
 
     emit(
@@ -1081,17 +1210,27 @@ def _execute_agent_workflow(
         )
     )
 
-    state.interpretation = final_content
-    register_analysis_report(state, emit, interpretation=final_content)
+    state.interpretation = interpretations[VIEW_ORIGINAL]
+    state.retail_interpretation = interpretations[VIEW_RETAIL]
+    register_analysis_report(
+        state, emit, interpretation=state.interpretation
+    )
 
     return AgentResult(
         run_id=state.run_id,
         request=state.request_parameters(),
         analysis=state.analysis,
-        interpretation=final_content,
+        interpretation=state.interpretation,
         processed_data=state.converted_data,
         metadata=build_run_metadata(state.artifact_files),
         status="success",
+        retail={
+            "retail_charge_pct": state.retail_charge_pct,
+            "multiplier": retail_multiplier(state.retail_charge_pct),
+            "analysis": state.retail_analysis,
+            "interpretation": state.retail_interpretation,
+            "processed_data": state.retail_data,
+        },
     )
 
 

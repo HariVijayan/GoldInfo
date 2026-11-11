@@ -2,7 +2,8 @@
 import { SAVINGS_CHART_MAXIMUM_POINTS } from "../config/savingsConfig";
 import { GOLD_LABEL, RUPEE_SYMBOL } from "../config/displayLabels";
 import type { SeriesPoint } from "../types/priceSeriesTypes";
-import type { CalendarYearRow, SavingsResult, SavingsTimelinePoint } from "../types/savingsTypes";
+import type { CalendarYearRow, SavingsTimelinePoint } from "../types/savingsTypes";
+import type { SavingsViewedResult } from "./priceViewSelectors";
 import { formatLongDate } from "./chartDates";
 import { downsampleEvenly } from "./downsample";
 import { formatRupees } from "./formatters";
@@ -10,6 +11,7 @@ import {
   describeInterest,
   formatGrams,
   formatMultiple,
+  formatPlainNumber,
   formatRate,
   formatSignedPercent,
 } from "./savingsFormatters";
@@ -72,20 +74,29 @@ export function buildYearlyBars(calendarYears: CalendarYearRow[]): YearlyBarDatu
 }
 
 /** Plain-language findings, written only from numbers the server returned. */
-export function buildTakeaways(savingsResult: SavingsResult): string[] {
+export function buildTakeaways(savingsResult: SavingsViewedResult): string[] {
   const { summary, request, currency_effect: currencyEffect } = savingsResult;
   const { gold, inr_savings: savings, comparison } = summary;
   const startDate = formatLongDate(request.effective_start_date);
   const endDate = formatLongDate(request.end_date);
   const takeaways: string[] = [];
 
+  const paidRetail = gold.purchase_charge_pct > 0;
   takeaways.push(
-    `${formatGrams(gold.grams)} g of ${GOLD_LABEL} bought on ${startDate} for ${formatRupees(
-      gold.invested_inr
-    )} was worth ${formatRupees(gold.current_value_inr)} on ${endDate}: ${formatSignedPercent(
-      gold.change_pct
-    )}, or ${formatRate(gold.cagr_pct)} a year.`
+    `${formatGrams(gold.grams)} g of ${GOLD_LABEL} bought on ${startDate}${
+      paidRetail ? ` at the retail price (+${formatPlainNumber(gold.purchase_charge_pct)}%)` : ""
+    } for ${formatRupees(gold.invested_inr)} was worth ${formatRupees(gold.current_value_inr)} on ${endDate}${
+      paidRetail ? ", valued at the original price" : ""
+    }: ${formatSignedPercent(gold.change_pct)}, or ${formatRate(gold.cagr_pct)} a year.`
   );
+
+  if (paidRetail && currencyEffect.retail_cost_effect_pct !== null) {
+    takeaways.push(
+      `The retail charge alone costs ${formatSignedPercent(
+        currencyEffect.retail_cost_effect_pct
+      )} on day one, because the gold is worth the original price, not what was paid.`
+    );
+  }
 
   takeaways.push(
     `${formatRupees(savings.principal_inr)} in savings at ${describeInterest(

@@ -16,6 +16,7 @@ import pandas as pd
 from artifacts import (
     ArtifactFile,
     build_forecast_points_artifact,
+    build_forecast_retail_artifact,
     build_forecast_report_artifact,
     build_forecast_training_artifact,
     build_gold_inr_per_gram_artifact,
@@ -37,6 +38,12 @@ from forecasting import (
     run_walk_forward_backtest,
 )
 from market_data import get_gold_history, get_usd_inr_history
+from retail_pricing import (
+    DEFAULT_RETAIL_CHARGE_PCT,
+    build_retail_forecast_view,
+    format_charge_label,
+    validate_retail_charge_pct,
+)
 
 logger = logging.getLogger("goldinfo.forecast")
 
@@ -137,6 +144,7 @@ def _execute_forecast(
     run_id: str,
     horizon_weeks: int,
     profile: FrequencyProfile,
+    retail_charge_pct: float,
     artifact_files: dict[str, ArtifactFile],
 ) -> dict[str, Any]:
     def keep(artifact: ArtifactFile) -> None:
@@ -269,6 +277,17 @@ def _execute_forecast(
         for key in SERIES_KEYS
     }
 
+    # The retail view is the same forecast with a flat charge on the INR
+    # per gram series. See build_retail_forecast_view for why that is exact.
+    history_points = training_rows[-profile.chart_history_steps :]
+    retail_view = build_retail_forecast_view(
+        retail_charge_pct,
+        forecast_points,
+        end_of_horizon[GOLD_INR_GRAM_KEY],
+        history_points,
+        GOLD_INR_GRAM_KEY,
+    )
+
     # 6. Backtest. A failure here must not discard the forecast.
     logger.info("run=%s running walk-forward backtest", run_id)
     try:
@@ -280,6 +299,12 @@ def _execute_forecast(
         backtest = None
 
     warnings = list(STATIC_CAVEATS)
+    warnings.append(
+        f"The Retail view adds a flat {format_charge_label(retail_charge_pct)}"
+        " percent to INR per gram prices, bounds, and history. Percentage "
+        "changes and backtest errors are the same in both views. Gold in "
+        "USD and USD/INR are never marked up."
+    )
     if profile.name == "daily":
         warnings.insert(0, DAILY_CAVEAT)
     if backtest is None:
@@ -341,6 +366,7 @@ def _execute_forecast(
         "horizon_weeks": horizon_weeks,
         "frequency": profile.name,
         "history_period": HISTORY_PERIOD,
+        "retail_charge_pct": retail_charge_pct,
     }
 
     # 7. Forecast artifacts.
@@ -357,6 +383,12 @@ def _execute_forecast(
             end_of_horizon=end_of_horizon,
             model_details=model_details,
             warnings=warnings,
+            retail_view=retail_view,
+        )
+    )
+    keep(
+        build_forecast_retail_artifact(
+            retail_view, GOLD_INR_GRAM_KEY, INTERVAL_LEVEL, profile.name
         )
     )
 
@@ -378,7 +410,8 @@ def _execute_forecast(
             "points": forecast_points,
             "end_of_horizon": end_of_horizon,
         },
-        "history": {"points": training_rows[-profile.chart_history_steps :]},
+        "history": {"points": history_points},
+        "retail": retail_view,
         "model": model_details,
         "warnings": warnings,
         "metadata": build_run_metadata(artifact_files),
@@ -388,6 +421,7 @@ def _execute_forecast(
 def run_forecast(
     horizon_weeks: int = DEFAULT_FORECAST_HORIZON_WEEKS,
     frequency: str = DEFAULT_FORECAST_FREQUENCY,
+    retail_charge_pct: float = DEFAULT_RETAIL_CHARGE_PCT,
 ) -> dict[str, Any]:
     if not 1 <= horizon_weeks <= MAXIMUM_FORECAST_HORIZON_WEEKS:
         raise ForecastError(
@@ -401,12 +435,19 @@ def run_forecast(
             http_status_code=422,
         )
 
+    try:
+        retail_charge_pct = validate_retail_charge_pct(retail_charge_pct)
+    except ValueError as exc:
+        raise ForecastError(str(exc), http_status_code=422) from exc
+
     profile = FREQUENCY_PROFILES[frequency]
     run_id = str(uuid4())
     artifact_files: dict[str, ArtifactFile] = {}
 
     try:
-        return _execute_forecast(run_id, horizon_weeks, profile, artifact_files)
+        return _execute_forecast(
+            run_id, horizon_weeks, profile, retail_charge_pct, artifact_files
+        )
     except ForecastError as exc:
         exc.run_metadata = build_run_metadata(artifact_files)
         raise

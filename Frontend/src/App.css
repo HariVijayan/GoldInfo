@@ -676,3 +676,35 @@ summary:focus-visible {
 @media (max-width: 600px) {
   .model-selector { max-width: none; width: 100%; }
 }
+
+/* Retail pricing controls in the page header */
+.page-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
+}
+
+.retail-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 20px; }
+.retail-charge-field { width: 170px; }
+
+.price-view-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 10px 16px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  color: var(--color-ink-muted);
+}
+
+.price-view-banner strong { color: var(--color-ink); }
+.price-view-banner-retail { border-color: var(--color-gold); background: var(--color-gold-soft); }
+
+@media (max-width: 600px) {
+  .retail-controls, .retail-charge-field { width: 100%; }
+}

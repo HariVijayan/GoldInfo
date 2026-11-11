@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { GOLD_LABEL } from "../../config/displayLabels";
-import type { SavingsResult } from "../../types/savingsTypes";
+import type { SavingsViewedResult } from "../../utils/priceViewSelectors";
 import {
   buildGoldDrawdown,
   buildGrowthChartPoints,
@@ -21,7 +21,7 @@ import { SavingsStatsGrid } from "./SavingsStatsGrid";
 import { YearlyReturnsChart } from "./YearlyReturnsChart";
 import { YearlyReturnsTable } from "./YearlyReturnsTable";
 
-export function SavingsDashboard({ savingsResult }: { savingsResult: SavingsResult }) {
+export function SavingsDashboard({ savingsResult }: { savingsResult: SavingsViewedResult }) {
   const [areNotesExpanded, setAreNotesExpanded] = useState(true);
   const timelinePoints = savingsResult.timeline.points;
 
