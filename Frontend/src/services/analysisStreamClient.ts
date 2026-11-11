@@ -41,6 +41,7 @@ function validateFinalResult(finalResult: AgentResult): AgentResult {
 export async function streamGoldAnalysis(
   periodValue: string,
   modelId: string,
+  retailChargePct: number,
   streamHandlers: {
     onStatusEvent: (agentEvent: AgentEvent) => void;
     onArtifactFile: (artifactFile: ArtifactFile) => void;
@@ -55,6 +56,7 @@ export async function streamGoldAnalysis(
       period: periodValue,
       // An empty id lets the server use its default model.
       model: modelId || undefined,
+      retail_charge_pct: retailChargePct,
     }),
     signal: abortSignal,
   });

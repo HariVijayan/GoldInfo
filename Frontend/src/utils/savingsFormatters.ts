@@ -7,6 +7,11 @@ export function formatGrams(grams: number): string {
   return grams.toLocaleString("en-IN", { maximumFractionDigits: 3 });
 }
 
+/** 15 stays "15", 12.5 stays "12.5". */
+export function formatPlainNumber(numberValue: number): string {
+  return numberValue.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+
 export function formatYears(years: number): string {
   return `${years.toFixed(1)} years`;
 }

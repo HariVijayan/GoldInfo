@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisDashboard } from "../components/analysis/AnalysisDashboard";
 import { ModelSelector } from "../components/analysis/ModelSelector";
+import { PriceViewBanner } from "../components/common/PriceViewBanner";
 import { ProgressTimeline } from "../components/analysis/ProgressTimeline";
 import { MetadataPanel, type RunDetailItem } from "../components/common/MetadataPanel";
 import { DEFAULT_PERIOD_VALUE, PERIOD_OPTIONS } from "../config/analysisConfig";
 import { CHART_RANGE_OPTIONS, DEFAULT_CHART_RANGE_KEY } from "../config/chartRangeConfig";
 import { GOLD_LABEL } from "../config/displayLabels";
 import { useModelCatalog } from "../hooks/useModelCatalog";
+import { useRerunOnRetailChargeChange } from "../hooks/useRerunOnRetailChargeChange";
+import { useRetailPricing } from "../hooks/useRetailPricing";
+import { applyAnalysisPriceView } from "../utils/priceViewSelectors";
 import { DEFAULT_PRICE_SERIES_KEY } from "../config/priceSeriesConfig";
 import { streamGoldAnalysis } from "../services/analysisStreamClient";
 import type { AgentEvent, AgentResult, AnalysisState, ArtifactFile } from "../types/analysisTypes";
@@ -24,6 +28,7 @@ function buildRunDetails(analysisResult: AgentResult): RunDetailItem[] {
     { label: "Run ID", value: analysisResult.run_id },
     { label: "Status", value: analysisResult.status },
     { label: "Requested period", value: String(requestDetails.period) },
+    { label: "Retail charge", value: `${String(requestDetails.retail_charge_pct ?? "N/A")}%` },
     {
       label: "Model",
       value: requestDetails.model
@@ -57,6 +62,7 @@ function AnalysisView() {
   const [selectedChartRangeKey, setSelectedChartRangeKey] =
     useState<ChartRangeKey>(DEFAULT_CHART_RANGE_KEY);
   const activeRequestController = useRef<AbortController | null>(null);
+  const { retailChargePct, priceView } = useRetailPricing();
   const {
     catalogState,
     modelCatalog,
@@ -85,6 +91,7 @@ function AnalysisView() {
       const finalResult = await streamGoldAnalysis(
         selectedPeriod,
         selectedModelId,
+        retailChargePct,
         {
           onStatusEvent: (agentEvent) =>
             setAgentEvents((currentEvents) => [...currentEvents, agentEvent]),
@@ -114,9 +121,21 @@ function AnalysisView() {
     analysisResult?.request.period ??
     "";
 
+  // The server sends both views; this only picks the one to show.
+  const displayedResult = useMemo(
+    () => (analysisResult ? applyAnalysisPriceView(analysisResult, priceView) : null),
+    [analysisResult, priceView]
+  );
+
+  useRerunOnRetailChargeChange(
+    retailChargePct,
+    analysisState === "success" || analysisState === "running",
+    runAnalysis
+  );
+
   const pricePoints = useMemo(
-    () => buildHistoricalPricePoints(analysisResult?.processed_data),
-    [analysisResult]
+    () => buildHistoricalPricePoints(displayedResult?.processed_data),
+    [displayedResult]
   );
 
   const coveredRangeKeys = useMemo(() => {
@@ -189,9 +208,14 @@ function AnalysisView() {
         </section>
       )}
 
-      {analysisState === "success" && analysisResult && (
+      {analysisState === "success" && displayedResult && analysisResult && (
+        <>
+        <PriceViewBanner
+          priceView={priceView}
+          retailChargePct={analysisResult.retail?.retail_charge_pct ?? retailChargePct}
+        />
         <AnalysisDashboard
-          analysisResult={analysisResult}
+          analysisResult={displayedResult}
           pricePoints={pricePoints}
           selectedPeriodLabel={selectedPeriodLabel}
           selectedSeriesKey={selectedChartSeriesKey}
@@ -200,6 +224,7 @@ function AnalysisView() {
           onSelectRange={setSelectedChartRangeKey}
           coveredRangeKeys={coveredRangeKeys}
         />
+        </>
       )}
 
       {artifactFiles.length > 0 && (

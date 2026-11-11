@@ -38,6 +38,11 @@ from model_pipelines import (
     resolve_pipeline,
 )
 from model_pipelines.registry import MODEL_ID_PATTERN
+from retail_pricing import (
+    DEFAULT_RETAIL_CHARGE_PCT,
+    MAXIMUM_RETAIL_CHARGE_PCT,
+    MINIMUM_RETAIL_CHARGE_PCT,
+)
 from savings_calculations import SUPPORTED_COMPOUNDING_MODES
 from savings_service import (
     DEFAULT_ANNUAL_INTEREST_RATE_PCT,
@@ -76,6 +81,17 @@ app.add_middleware(
 )
 
 
+def retail_charge_field():
+    """Flat percentage added to INR prices for the retail view."""
+
+    return Field(
+        default=DEFAULT_RETAIL_CHARGE_PCT,
+        ge=MINIMUM_RETAIL_CHARGE_PCT,
+        le=MAXIMUM_RETAIL_CHARGE_PCT,
+        allow_inf_nan=False,
+    )
+
+
 class AnalysisRequest(BaseModel):
     goal: str = Field(
         default=(
@@ -96,6 +112,8 @@ class AnalysisRequest(BaseModel):
         pattern=MODEL_ID_PATTERN.pattern,
     )
 
+    retail_charge_pct: float = retail_charge_field()
+
 
 class ForecastRequest(BaseModel):
     horizon_weeks: int = Field(
@@ -104,6 +122,7 @@ class ForecastRequest(BaseModel):
         le=MAXIMUM_FORECAST_HORIZON_WEEKS,
     )
     frequency: Literal["daily", "weekly"] = DEFAULT_FORECAST_FREQUENCY
+    retail_charge_pct: float = retail_charge_field()
 
 
 class SavingsRequest(BaseModel):
@@ -133,6 +152,7 @@ class SavingsRequest(BaseModel):
     )
 
     compounding: Literal[SUPPORTED_COMPOUNDING_MODES] = DEFAULT_COMPOUNDING  # type: ignore[valid-type]
+    retail_charge_pct: float = retail_charge_field()
 
 
 class HealthResponse(BaseModel):
@@ -242,6 +262,7 @@ def analyze(request: AnalysisRequest) -> JSONResponse:
             goal=request.goal,
             period=request.period,
             model_pipeline=model_pipeline,
+            retail_charge_pct=request.retail_charge_pct,
         )
     except AgentError as exc:
         return JSONResponse(
@@ -265,6 +286,7 @@ def forecast(request: ForecastRequest | None = None) -> JSONResponse:
         result = run_forecast(
             horizon_weeks=forecast_request.horizon_weeks,
             frequency=forecast_request.frequency,
+            retail_charge_pct=forecast_request.retail_charge_pct,
         )
     except ForecastError as exc:
         return build_service_error_response(exc)
@@ -293,6 +315,7 @@ def savings(request: SavingsRequest | None = None) -> JSONResponse:
             inr_savings_amount=savings_request.inr_savings_amount,
             annual_interest_rate_pct=savings_request.annual_interest_rate_pct,
             compounding=savings_request.compounding,
+            retail_charge_pct=savings_request.retail_charge_pct,
         )
     except SavingsError as exc:
         return build_service_error_response(exc)
@@ -334,6 +357,7 @@ async def analysis_stream(
     goal: str,
     period: str,
     model_pipeline: ModelPipeline,
+    retail_charge_pct: float,
 ) -> AsyncGenerator[str, None]:
 
     event_loop = asyncio.get_running_loop()
@@ -350,6 +374,7 @@ async def analysis_stream(
             period,
             handle_event,
             model_pipeline,
+            retail_charge_pct,
         )
     )
 
@@ -411,6 +436,7 @@ async def analyze_stream(
             request.goal,
             request.period,
             model_pipeline,
+            request.retail_charge_pct,
         ),
         media_type="text/event-stream",
         headers={

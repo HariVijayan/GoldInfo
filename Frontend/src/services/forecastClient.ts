@@ -14,12 +14,17 @@ export class ForecastRequestError extends Error {
 export async function requestForecast(
   horizonWeeks: number,
   frequency: ForecastFrequency,
+  retailChargePct: number,
   abortSignal: AbortSignal
 ): Promise<ForecastResult> {
   const response = await fetch(FORECAST_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ horizon_weeks: horizonWeeks, frequency }),
+    body: JSON.stringify({
+      horizon_weeks: horizonWeeks,
+      frequency,
+      retail_charge_pct: retailChargePct,
+    }),
     signal: abortSignal,
   });
 

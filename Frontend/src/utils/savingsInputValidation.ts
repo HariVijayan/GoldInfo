@@ -32,7 +32,8 @@ export type SavingsFormCheck = {
  */
 export function validateSavingsForm(
   formValues: SavingsFormValues,
-  dataRange: SavingsDataRange | null
+  dataRange: SavingsDataRange | null,
+  retailChargePct: number
 ): SavingsFormCheck {
   const errors: SavingsFormErrors = {};
 
@@ -85,6 +86,7 @@ export function validateSavingsForm(
       inrSavingsAmount,
       annualInterestRatePct,
       compounding: formValues.compounding,
+      retailChargePct,
     },
   };
 }

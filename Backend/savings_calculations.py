@@ -194,18 +194,23 @@ def calculate_annualized_volatility_pct(values: pd.Series) -> float | None:
     )
 
 
-def calculate_share_of_days_gold_ahead_pct(timeline: pd.DataFrame) -> float | None:
+def calculate_share_of_days_gold_ahead_pct(
+    timeline: pd.DataFrame,
+    gold_cost: float,
+    inr_principal: float,
+) -> float | None:
     """
     Share of days after the start on which gold's growth multiple beat the
     savings multiple. Multiples, not rupee values, so differing budgets
-    still compare fairly.
+    still compare fairly. Gold's multiple starts from what was paid, which
+    in the retail view is more than the day-one market value.
     """
 
     if len(timeline) < 2:
         return None
 
-    gold_multiple = timeline[GOLD_VALUE_COLUMN] / timeline[GOLD_VALUE_COLUMN].iloc[0]
-    savings_multiple = timeline[INR_VALUE_COLUMN] / timeline[INR_VALUE_COLUMN].iloc[0]
+    gold_multiple = timeline[GOLD_VALUE_COLUMN] / gold_cost
+    savings_multiple = timeline[INR_VALUE_COLUMN] / inr_principal
 
     return float((gold_multiple.iloc[1:] > savings_multiple.iloc[1:]).mean() * 100)
 
@@ -214,10 +219,18 @@ def calculate_share_of_days_gold_ahead_pct(timeline: pd.DataFrame) -> float | No
 # Currency effect
 # ---------------------------------------------------------------------------
 
-def decompose_currency_effect(window_frame: pd.DataFrame) -> dict:
+def decompose_currency_effect(
+    window_frame: pd.DataFrame,
+    purchase_cost_multiplier: float = 1.0,
+) -> dict:
     """
-    Split gold's rupee return into the dollar price move and the rupee's
-    move against the dollar: (1 + inr) = (1 + usd gold) x (1 + usd/inr).
+    Split gold's rupee return into its parts:
+
+        (1 + inr return) = (1 + usd gold) x (1 + usd/inr) x (1 + retail cost)
+
+    The retail cost effect is the one-off loss from paying the retail charge
+    on purchase and valuing the gold at the market price. It is zero in the
+    original view, where the multiplier is 1.
     """
 
     first_row = window_frame.iloc[0]
@@ -225,7 +238,12 @@ def decompose_currency_effect(window_frame: pd.DataFrame) -> dict:
 
     gold_usd_change = last_row["gold_usd_per_ounce"] / first_row["gold_usd_per_ounce"] - 1
     usd_inr_change = last_row["inr_per_usd"] / first_row["inr_per_usd"] - 1
-    gold_inr_change = last_row["gold_inr_per_gram"] / first_row["gold_inr_per_gram"] - 1
+    retail_cost_effect = 1.0 / purchase_cost_multiplier - 1.0
+    gold_inr_change = (
+        last_row["gold_inr_per_gram"]
+        / (first_row["gold_inr_per_gram"] * purchase_cost_multiplier)
+        - 1
+    )
 
     return {
         "start_gold_usd_per_ounce": float(first_row["gold_usd_per_ounce"]),
@@ -234,6 +252,7 @@ def decompose_currency_effect(window_frame: pd.DataFrame) -> dict:
         "end_inr_per_usd": float(last_row["inr_per_usd"]),
         "gold_usd_change_pct": to_percent(gold_usd_change),
         "usd_inr_change_pct": to_percent(usd_inr_change),
+        "retail_cost_effect_pct": to_percent(retail_cost_effect),
         "gold_inr_change_pct": to_percent(gold_inr_change),
     }
 
@@ -246,10 +265,12 @@ def _last_position_on_or_before(index: pd.DatetimeIndex, boundary: pd.Timestamp)
     return int(index.searchsorted(boundary, side="right")) - 1
 
 
-def build_calendar_year_rows(timeline: pd.DataFrame) -> list[dict]:
+def build_calendar_year_rows(timeline: pd.DataFrame, gold_cost: float) -> list[dict]:
     """
     Year-by-year change of both holdings. Each year runs from the last
-    observation of the previous year, so the years chain without gaps.
+    observation of the previous year, so the years chain without gaps. The
+    first year starts from what was paid for the gold, so a retail charge
+    shows up as a drag in the year of purchase.
     """
 
     index = timeline.index
@@ -269,7 +290,8 @@ def build_calendar_year_rows(timeline: pd.DataFrame) -> list[dict]:
 
         gold_values = timeline[GOLD_VALUE_COLUMN]
         savings_values = timeline[INR_VALUE_COLUMN]
-        gold_change = gold_values.iloc[end_position] / gold_values.iloc[start_position] - 1
+        start_gold_value = gold_cost if start_position == 0 else gold_values.iloc[start_position]
+        gold_change = gold_values.iloc[end_position] / start_gold_value - 1
         savings_change = (
             savings_values.iloc[end_position] / savings_values.iloc[start_position] - 1
         )
@@ -304,12 +326,15 @@ def build_holding_period_outcomes(
     timeline: pd.DataFrame,
     annual_rate: float,
     compounding: str,
+    purchase_cost_multiplier: float = 1.0,
 ) -> list[dict]:
     """
     For each window length, every possible start date inside the selected
     range is treated as a purchase date held for that long. This shows how
     much the result depends on when you started. Windows overlap, so the
-    counts are not independent samples.
+    counts are not independent samples. The multiplier is what is paid per
+    unit of market value on purchase (1.15 for a 15 percent retail charge);
+    gold is always valued at the market price.
     """
 
     dates = timeline.index
@@ -337,7 +362,11 @@ def build_holding_period_outcomes(
             / DAYS_PER_YEAR
         )
 
-        gold_returns = gold_prices[end_positions] / gold_prices[start_positions] - 1.0
+        gold_returns = (
+            gold_prices[end_positions]
+            / (gold_prices[start_positions] * purchase_cost_multiplier)
+            - 1.0
+        )
         savings_returns = (
             calculate_savings_growth_factor(annual_rate, compounding, elapsed_years) - 1.0
         )

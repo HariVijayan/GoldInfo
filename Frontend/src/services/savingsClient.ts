@@ -40,6 +40,7 @@ export async function requestSavingsComparison(
       inr_savings_amount: requestParams.inrSavingsAmount,
       annual_interest_rate_pct: requestParams.annualInterestRatePct,
       compounding: requestParams.compounding,
+      retail_charge_pct: requestParams.retailChargePct,
     }),
     signal: abortSignal,
   });
@@ -64,8 +65,8 @@ export async function requestSavingsComparison(
   const savingsResult = responseBody as SavingsResult;
   if (
     savingsResult.status !== "success" ||
-    !savingsResult.summary ||
-    !Array.isArray(savingsResult.timeline?.points)
+    !savingsResult.views?.original?.summary ||
+    !savingsResult.views?.retail?.summary
   ) {
     throw new SavingsRequestError("The server response did not contain a comparison.");
   }

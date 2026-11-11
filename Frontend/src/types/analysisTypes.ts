@@ -67,12 +67,22 @@ export type ProcessedGoldData = {
   metadata: Record<string, DatasetMetadata>;
 };
 
+/** The retail-priced twin of the analysis, interpretation, and INR datasets. */
+export type AnalysisRetailView = {
+  retail_charge_pct: number;
+  multiplier: number;
+  analysis: AnalysisMetrics;
+  interpretation: string;
+  processed_data: Pick<ProcessedGoldData, "gold_inr_per_ounce" | "gold_inr_per_gram" | "metadata">;
+};
+
 export type AgentResult = {
   run_id: string;
   request: { goal: string; period: string; [key: string]: unknown };
   analysis: AnalysisMetrics;
   interpretation: string;
   processed_data: ProcessedGoldData | null;
+  retail?: AnalysisRetailView | null;
   metadata?: RunMetadata;
   status: "success" | "error";
 };

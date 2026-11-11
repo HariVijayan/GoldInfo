@@ -7,11 +7,12 @@ import { MetricCard } from "../common/MetricCard";
 
 export function CurrencyEffectPanel({ currencyEffect }: { currencyEffect: CurrencyEffect }) {
   const rupeeWeakened = (currencyEffect.usd_inr_change_pct ?? 0) >= 0;
+  const hasRetailCost = (currencyEffect.retail_cost_effect_pct ?? 0) !== 0;
 
   return (
     <ChartPanel
       title="Why gold rose in rupees"
-      subtitle="Gold is priced in dollars. Its rupee price combines the dollar move with the rupee's move against the dollar."
+      subtitle="Gold is priced in dollars. Its rupee return combines the dollar move, the rupee's move against the dollar, and any retail charge paid."
     >
       <div className="metrics-grid metrics-grid-compact">
         <MetricCard
@@ -29,10 +30,18 @@ export function CurrencyEffectPanel({ currencyEffect }: { currencyEffect: Curren
             currencyEffect.end_inr_per_usd
           )} per $ (${rupeeWeakened ? "weaker" : "stronger"} rupee)`}
         />
+        {hasRetailCost && (
+          <MetricCard
+            metricTitle="Retail charge paid"
+            metricValue={formatSignedPercent(currencyEffect.retail_cost_effect_pct)}
+            metricCaption="bought above, valued at the original price"
+            changeTone="negative"
+          />
+        )}
         <MetricCard
           metricTitle={`${GOLD_LABEL} in ${RUPEE_SYMBOL}`}
           metricValue={formatSignedPercent(currencyEffect.gold_inr_change_pct)}
-          metricCaption="the two combined"
+          metricCaption={hasRetailCost ? "all of the above combined" : "the two combined"}
           changeTone={getChangeTone(currencyEffect.gold_inr_change_pct)}
         />
       </div>
