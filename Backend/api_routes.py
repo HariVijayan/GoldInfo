@@ -19,3 +19,5 @@ ROUTE_FORECAST = f"{API_PREFIX}/forecast"
 
 ROUTE_SAVINGS = f"{API_PREFIX}/savings"
 ROUTE_SAVINGS_DATA_RANGE = f"{API_PREFIX}/savings/data-range"
+
+ROUTE_SAVINGS_MONTHLY = f"{API_PREFIX}/savings/monthly"

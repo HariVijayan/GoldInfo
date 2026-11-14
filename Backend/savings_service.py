@@ -108,7 +108,7 @@ class SavingsError(Exception):
         self.run_metadata: dict[str, Any] | None = None
 
 
-def _load_aligned_history():
+def load_aligned_history():
     try:
         return get_aligned_market_history()
     except MarketHistoryUnavailableError as exc:
@@ -118,7 +118,7 @@ def _load_aligned_history():
 def get_savings_data_range() -> dict[str, Any]:
     """The first and last date a comparison can use."""
 
-    history = _load_aligned_history()
+    history = load_aligned_history()
     frame = history.aligned_frame
 
     return {
@@ -165,7 +165,7 @@ def _validate_inputs(
         )
 
 
-def _find_start_position(
+def find_start_position(
     frame: pd.DataFrame,
     requested_start_date: date | None,
     warnings: list[str],
@@ -404,11 +404,11 @@ def _execute_savings_comparison(
         gold_grams, inr_savings_amount, annual_interest_rate_pct, compounding
     )
 
-    history = _load_aligned_history()
+    history = load_aligned_history()
     frame = history.aligned_frame
     warnings: list[str] = []
 
-    start_position = _find_start_position(frame, requested_start_date, warnings)
+    start_position = find_start_position(frame, requested_start_date, warnings)
 
     if start_position >= len(frame) - 1:
         raise SavingsError(

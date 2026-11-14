@@ -1,10 +1,10 @@
-import type { ChangeEvent, FormEvent } from "react";
+import type { FormEvent } from "react";
+import { FormTextField } from "../common/FormTextField";
 import { COMPOUNDING_OPTIONS, INTEREST_RATE_PRESETS_PCT } from "../../config/savingsConfig";
 import { RUPEE_SYMBOL } from "../../config/displayLabels";
 import type {
   SavingsDataRange,
   SavingsFormErrors,
-  SavingsFormField,
   SavingsFormValues,
 } from "../../types/savingsTypes";
 
@@ -18,49 +18,6 @@ type SavingsControlsProps = {
   isRunning: boolean;
   onSubmit: () => void;
 };
-
-type TextFieldProps = {
-  fieldName: SavingsFormField;
-  label: string;
-  hint: string;
-  value: string;
-  error?: string;
-  disabled: boolean;
-  inputMode?: "decimal";
-  type?: "text" | "date";
-  min?: string;
-  max?: string;
-  placeholder?: string;
-  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
-};
-
-function TextField({ fieldName, label, hint, error, ...inputProps }: TextFieldProps) {
-  const inputId = `savings-${fieldName}`;
-  const hintId = `${inputId}-hint`;
-
-  return (
-    <div className="field">
-      <label className="field-label" htmlFor={inputId}>
-        {label}
-      </label>
-      <input
-        id={inputId}
-        className="field-input"
-        aria-invalid={error ? true : undefined}
-        aria-describedby={hintId}
-        autoComplete="off"
-        {...inputProps}
-      />
-      <small
-        id={hintId}
-        className={error ? "field-hint field-hint-error" : "field-hint"}
-        role={error ? "alert" : undefined}
-      >
-        {error ?? hint}
-      </small>
-    </div>
-  );
-}
 
 export function SavingsControls({
   formValues,
@@ -80,7 +37,8 @@ export function SavingsControls({
   return (
     <form className="panel savings-form" aria-label="Savings settings" onSubmit={handleSubmit}>
       <div className="field-grid">
-        <TextField
+        <FormTextField
+          idPrefix="savings"
           fieldName="startDate"
           type="date"
           label="Start date"
@@ -96,7 +54,8 @@ export function SavingsControls({
           disabled={isRunning}
           onChange={(event) => onChangeValues({ startDate: event.target.value })}
         />
-        <TextField
+        <FormTextField
+          idPrefix="savings"
           fieldName="goldGrams"
           label="Gold bought (grams)"
           hint="Priced per gram on the start date."
@@ -106,7 +65,8 @@ export function SavingsControls({
           disabled={isRunning}
           onChange={(event) => onChangeValues({ goldGrams: event.target.value })}
         />
-        <TextField
+        <FormTextField
+          idPrefix="savings"
           fieldName="inrSavingsAmount"
           label={`INR savings (${RUPEE_SYMBOL})`}
           hint="Empty uses the cost of the gold, for a like-for-like test."
@@ -117,7 +77,8 @@ export function SavingsControls({
           disabled={isRunning}
           onChange={(event) => onChangeValues({ inrSavingsAmount: event.target.value })}
         />
-        <TextField
+        <FormTextField
+          idPrefix="savings"
           fieldName="annualInterestRatePct"
           label="Interest rate (% a year)"
           hint="One flat rate for the whole period."

@@ -21,6 +21,7 @@ from api_routes import (
     ROUTE_MODELS,
     ROUTE_SAVINGS,
     ROUTE_SAVINGS_DATA_RANGE,
+    ROUTE_SAVINGS_MONTHLY,
 )
 from forecast_service import (
     DEFAULT_FORECAST_FREQUENCY,
@@ -42,6 +43,13 @@ from retail_pricing import (
     DEFAULT_RETAIL_CHARGE_PCT,
     MAXIMUM_RETAIL_CHARGE_PCT,
     MINIMUM_RETAIL_CHARGE_PCT,
+)
+from monthly_savings_calculations import SUPPORTED_BUY_RULES
+from monthly_savings_service import (
+    DEFAULT_BUY_RULE,
+    DEFAULT_MONTHLY_INVESTMENT_INR,
+    MAXIMUM_MONTHLY_INVESTMENT_INR,
+    run_monthly_savings_comparison,
 )
 from savings_calculations import SUPPORTED_COMPOUNDING_MODES
 from savings_service import (
@@ -152,6 +160,29 @@ class SavingsRequest(BaseModel):
     )
 
     compounding: Literal[SUPPORTED_COMPOUNDING_MODES] = DEFAULT_COMPOUNDING  # type: ignore[valid-type]
+    retail_charge_pct: float = retail_charge_field()
+
+
+class MonthlySavingsRequest(BaseModel):
+    # None means the oldest date with data.
+    start_date: date | None = None
+
+    monthly_investment_inr: float = Field(
+        default=DEFAULT_MONTHLY_INVESTMENT_INR,
+        gt=0,
+        le=MAXIMUM_MONTHLY_INVESTMENT_INR,
+        allow_inf_nan=False,
+    )
+
+    annual_interest_rate_pct: float = Field(
+        default=DEFAULT_ANNUAL_INTEREST_RATE_PCT,
+        ge=0,
+        le=MAXIMUM_ANNUAL_INTEREST_RATE_PCT,
+        allow_inf_nan=False,
+    )
+
+    compounding: Literal[SUPPORTED_COMPOUNDING_MODES] = DEFAULT_COMPOUNDING  # type: ignore[valid-type]
+    buy_rule: Literal[SUPPORTED_BUY_RULES] = DEFAULT_BUY_RULE  # type: ignore[valid-type]
     retail_charge_pct: float = retail_charge_field()
 
 
@@ -444,3 +475,22 @@ async def analyze_stream(
             "Connection": "keep-alive",
         },
     )
+
+
+@app.post(ROUTE_SAVINGS_MONTHLY)
+def savings_monthly(request: MonthlySavingsRequest | None = None) -> JSONResponse:
+    monthly_request = request or MonthlySavingsRequest()
+
+    try:
+        result = run_monthly_savings_comparison(
+            start_date=monthly_request.start_date,
+            monthly_investment_inr=monthly_request.monthly_investment_inr,
+            annual_interest_rate_pct=monthly_request.annual_interest_rate_pct,
+            compounding=monthly_request.compounding,
+            buy_rule=monthly_request.buy_rule,
+            retail_charge_pct=monthly_request.retail_charge_pct,
+        )
+    except SavingsError as exc:
+        return build_service_error_response(exc)
+
+    return JSONResponse(content=jsonable_encoder(result))
