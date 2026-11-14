@@ -8,6 +8,7 @@
 import type { AgentResult } from "../types/analysisTypes";
 import type { ForecastResult } from "../types/forecastTypes";
 import type { PriceView } from "../types/retailPricingTypes";
+import type { MonthlyResult, MonthlyViewData } from "../types/savingsMonthlyTypes";
 import type { SavingsResult, SavingsViewData } from "../types/savingsTypes";
 
 const GOLD_INR_PER_GRAM_KEY = "gold_inr_per_gram";
@@ -80,5 +81,13 @@ export type SavingsViewedResult = Omit<SavingsResult, "views"> & SavingsViewData
 
 export function selectSavingsView(savingsResult: SavingsResult, priceView: PriceView): SavingsViewedResult {
   const { views, ...sharedFields } = savingsResult;
+  return { ...sharedFields, ...views[priceView] };
+}
+
+/** Shared fields plus the chosen view's fields, in one flat object. */
+export type MonthlyViewedResult = Omit<MonthlyResult, "views"> & MonthlyViewData;
+
+export function selectMonthlyView(monthlyResult: MonthlyResult, priceView: PriceView): MonthlyViewedResult {
+  const { views, ...sharedFields } = monthlyResult;
   return { ...sharedFields, ...views[priceView] };
 }

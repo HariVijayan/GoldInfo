@@ -680,3 +680,132 @@ def build_savings_report_artifact(
         "row_count": None,
         "content": "\n".join(lines),
     }
+
+
+# ---------------------------------------------------------------------------
+# Monthly savings artifacts
+# ---------------------------------------------------------------------------
+
+MONTHLY_INSTALLMENT_COLUMNS = [
+    "month",
+    "rd_deposit_date",
+    "gold_buy_date",
+    "market_price_per_gram",
+    "price_paid_per_gram",
+    "grams_bought",
+    "gold_value_now",
+    "rd_value_now",
+]
+MONTHLY_TIMELINE_COLUMNS = [
+    "date",
+    "gold_price_per_gram",
+    "invested_inr",
+    "rd_value",
+    "grams_held",
+    "gold_value",
+    "average_cost_per_gram",
+]
+
+
+def _monthly_filename(base_name: str, view_name: str) -> str:
+    suffix = "_retail" if view_name == "retail" else ""
+    return f"{base_name}{suffix}.csv"
+
+
+ARTIFACT_FILENAME_ORDER += [
+    "savings_monthly_installments.csv",
+    "savings_monthly_installments_retail.csv",
+    "savings_monthly_timeline.csv",
+    "savings_monthly_timeline_retail.csv",
+    "savings_monthly_report.txt",
+]
+
+
+def build_monthly_installments_artifact(
+    installment_rows: list[dict[str, Any]],
+    view_name: str,
+) -> ArtifactFile:
+    is_retail = view_name == "retail"
+    return _build_csv_artifact(
+        filename=_monthly_filename("savings_monthly_installments", view_name),
+        description=(
+            "One row per monthly installment: the RD payment date, the day "
+            "the gold was bought, prices, grams, and what each installment "
+            "is worth on the last date. "
+            + (
+                "Retail view: price_paid_per_gram includes the retail charge."
+                if is_retail
+                else "Original view: gold bought at the market price."
+            )
+        ),
+        column_names=MONTHLY_INSTALLMENT_COLUMNS,
+        rows=installment_rows,
+    )
+
+
+def build_monthly_timeline_artifact(
+    timeline_rows: list[dict[str, Any]],
+    view_name: str,
+) -> ArtifactFile:
+    return _build_csv_artifact(
+        filename=_monthly_filename("savings_monthly_timeline", view_name),
+        description=(
+            "Weekly value of the gold portfolio and the recurring deposit "
+            f"({view_name} view), from the first installment to the last date."
+        ),
+        column_names=MONTHLY_TIMELINE_COLUMNS,
+        rows=timeline_rows,
+    )
+
+
+def build_monthly_report_artifact(
+    *,
+    run_id: str,
+    request_parameters: Mapping[str, Any],
+    views: Mapping[str, Mapping[str, Any]],
+    skipped_months: list[Mapping[str, str]],
+    warnings: list[str],
+) -> ArtifactFile:
+    lines: list[str] = [
+        "GOLDINFO MONTHLY SAVINGS REPORT",
+        "===============================",
+        f"Run ID: {run_id}",
+        f"Report generated: {datetime.now().isoformat(timespec='seconds')}",
+        "",
+        "REQUEST",
+        "-------",
+    ]
+    _append_mapping_lines(lines, request_parameters)
+
+    if skipped_months:
+        lines += ["", "MONTHS LEFT OUT", "---------------"]
+        lines += [f"{month['month']}: {month['reason']}" for month in skipped_months]
+
+    for view_name, view in views.items():
+        heading = f"{view_name.upper()} VIEW"
+        lines += ["", heading, "=" * len(heading), "", "SUMMARY", "-------"]
+        _append_mapping_lines(lines, view["summary"])
+
+        lines += ["", "YEAR END", "--------"]
+        for year_row in view["year_end_rows"]:
+            lines.append(
+                f"{year_row['year']} ({year_row['as_of_date']}): invested "
+                f"{_format_report_value(year_row['invested_inr'])}, gold "
+                f"{_format_report_value(year_row['gold_value'])}, RD "
+                f"{_format_report_value(year_row['rd_value'])}"
+            )
+
+    lines += ["", "WARNINGS AND CAVEATS", "--------------------"]
+    lines += [f"- {warning}" for warning in warnings]
+    lines.append("")
+
+    return {
+        "filename": "savings_monthly_report.txt",
+        "media_type": TEXT_MEDIA_TYPE,
+        "description": (
+            "Inputs, months left out, then for the original and the retail "
+            "view: results and year-end snapshots. Caveats at the end."
+        ),
+        "row_count": None,
+        "content": "\n".join(lines),
+    }

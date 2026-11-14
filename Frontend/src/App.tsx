@@ -3,16 +3,18 @@ import "./App.css";
 import AnalysisView from "./views/AnalysisView";
 import { GOLD_LABEL } from "./config/displayLabels";
 import ForecastView from "./views/ForecastView";
+import SavingsMonthlyView from "./views/SavingsMonthlyView";
 import SavingsView from "./views/SavingsView";
 import { RetailPricingControls } from "./components/layout/RetailPricingControls";
 import { RetailPricingProvider } from "./context/RetailPricingProvider";
 
-type ActiveView = "analysis" | "forecast" | "savings";
+type ActiveView = "analysis" | "forecast" | "savings" | "savings-monthly";
 
 const VIEW_OPTIONS: { value: ActiveView; label: string }[] = [
   { value: "analysis", label: "Historical analysis" },
   { value: "forecast", label: "Forecast" },
   { value: "savings", label: "Savings" },
+  { value: "savings-monthly", label: "Savings (Monthly)" },
 ];
 
 function App() {
@@ -74,6 +76,15 @@ function App() {
           hidden={activeView !== "savings"}
         >
           <SavingsView />
+        </div>
+        <div
+          className="view"
+          role="tabpanel"
+          id="view-panel-savings-monthly"
+          aria-labelledby="view-tab-savings-monthly"
+          hidden={activeView !== "savings-monthly"}
+        >
+          <SavingsMonthlyView />
         </div>
       </div>
     </main>

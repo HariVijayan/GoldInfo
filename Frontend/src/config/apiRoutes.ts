@@ -12,6 +12,7 @@ export const API_ROUTES = {
   forecast: "/api/forecast",
   savings: "/api/savings",
   savingsDataRange: "/api/savings/data-range",
+  savingsMonthly: "/api/savings/monthly",
 } as const;
 
 export function buildApiUrl(routePath: string): string {
