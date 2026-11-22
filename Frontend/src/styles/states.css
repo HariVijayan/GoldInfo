@@ -1,0 +1,10 @@
+.empty-state p,
+.error-panel p { margin-top: 6px; color: var(--color-ink-muted); max-width: 60ch; }
+
+.error-panel {
+  background: var(--color-error-surface);
+  border-color: var(--color-negative);
+  color: var(--color-negative);
+}
+
+.error-panel p { color: inherit; }

@@ -1,0 +1,24 @@
+.procedure { display: flex; flex-direction: column; gap: 14px; }
+.procedure-purpose { max-width: 90ch; }
+
+.procedure-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.procedure h3 {
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-gold);
+}
+
+.procedure ul,
+.procedure ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 0.93rem; }
+
+@media (max-width: 900px) {
+  .procedure-columns { grid-template-columns: 1fr; }
+}

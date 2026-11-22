@@ -1,0 +1,19 @@
+/* The gold strip under the header that says which prices are shown. */
+.price-view-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 10px 16px;
+  background: var(--color-gold-soft);
+  border: 1px solid var(--color-gold);
+  border-radius: 10px;
+  color: var(--color-ink);
+  font-size: 0.92rem;
+}
+
+.price-view-notice strong { color: var(--color-ink); }
+
+/* Retail is drawn stronger so the active view is obvious at a glance. */
+.price-view-notice-retail { background: var(--color-gold); color: var(--color-page); }
+.price-view-notice-retail strong { color: var(--color-page); }

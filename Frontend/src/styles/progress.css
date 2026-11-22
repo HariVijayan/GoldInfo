@@ -1,0 +1,23 @@
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 0 16px;
+  list-style: none;
+  border-left: 2px solid var(--color-border);
+}
+
+.timeline-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 0;
+  font-size: 0.92rem;
+}
+
+.timeline-item.is-active { border-left: 2px solid var(--color-gold); margin-left: -18px; padding-left: 16px; }
+
+.timeline-type { color: var(--color-gold); font-weight: 600; min-width: 90px; }
+
+.timeline-message { color: var(--color-ink-muted); flex: 1 1 240px; }

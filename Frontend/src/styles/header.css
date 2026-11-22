@@ -1,0 +1,53 @@
+/* The fixed top bar: it stays in view while the page scrolls. */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--color-page);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.06);
+}
+
+.app-header-inner {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding: 10px 16px;
+}
+
+.app-header-brand h1 {
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--color-gold);
+}
+
+.app-header-brand p { font-size: 0.8rem; color: var(--color-ink-muted); }
+
+.app-header-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
+
+/* Header fields are smaller than the form fields further down the page. */
+.header-field { gap: 2px; }
+.header-field .field-label { font-size: 0.75rem; }
+.header-field .field-input { padding: 5px 10px; font-size: 0.9rem; }
+.header-field .period-option { padding: 5px 12px; font-size: 0.88rem; }
+
+.model-selector { min-width: 200px; max-width: 280px; }
+.retail-controls { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
+.retail-charge-field { width: 120px; }
+.icon-button { padding: 4px 10px; margin-top: 0; flex-shrink: 0; }
+
+.app-main { padding: 16px 16px 40px; }
+
+@media (max-width: 700px) {
+  .app-header-brand p { display: none; }
+  .app-header-inner { align-items: stretch; padding: 8px 12px; }
+  .app-header-controls { width: 100%; }
+  .model-selector { max-width: none; flex: 1 1 100%; }
+  .app-main { padding: 12px 12px 32px; }
+  html { scroll-padding-top: 190px; }
+}

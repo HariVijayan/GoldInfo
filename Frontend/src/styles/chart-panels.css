@@ -1,0 +1,53 @@
+.chart-panel { padding: 20px; }
+
+.chart-panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.chart-panel-titles h2 { font-size: 1.05rem; font-weight: 600; }
+
+.chart-panel-titles h3 { font-size: 0.95rem; font-weight: 600; }
+
+.chart-panel-titles p { margin-top: 2px; color: var(--color-ink-muted); font-size: 0.88rem; max-width: 62ch; }
+
+.chart-panel-section + .chart-panel-section { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--color-border); }
+
+.chart-panel-section > .chart-panel-titles { margin-bottom: 8px; }
+
+.chart-empty { padding: 20px 0; color: var(--color-ink-muted); font-size: 0.92rem; max-width: 52ch; }
+
+.toggle-group { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+
+.toggle-option { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; cursor: pointer; }
+
+.toggle-option input { accent-color: var(--color-gold); }
+
+.toggle-option:has(input:disabled) { color: var(--color-ink-muted); cursor: not-allowed; }
+
+.chart-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 14px 20px; }
+
+.chart-toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
+
+.chart-toolbar-label { min-width: 84px; font-size: 0.9rem; font-weight: 500; color: var(--color-ink-muted); }
+
+.chart-toolbar-caption { font-size: 0.85rem; color: var(--color-ink-muted); }
+
+.period-option-compact { padding: 5px 11px; font-size: 0.82rem; }
+
+.period-option:disabled { opacity: 0.4; }
+
+@media (min-width: 1001px) {
+  .chart-toolbar { position: sticky; top: 8px; z-index: 5; box-shadow: 0 6px 16px -10px rgba(0, 0, 0, 0.35); }
+}
+
+@media (max-width: 600px) {
+  .chart-toolbar { padding: 14px; }
+  .chart-toolbar-label { min-width: 100%; }
+  .range-picker { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .range-picker .period-option { flex-shrink: 0; }
+}
