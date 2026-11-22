@@ -1,0 +1,9 @@
+.app-footer {
+  padding: 14px 16px 24px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-ink-muted);
+  font-size: 0.82rem;
+}
+
+.app-footer p { max-width: 110ch; }
+.app-footer strong { color: var(--color-ink); }

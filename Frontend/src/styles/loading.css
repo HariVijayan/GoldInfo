@@ -1,0 +1,17 @@
+.loading-panel { display: flex; align-items: center; gap: 16px; }
+
+.loading-panel h2 { font-size: 1.1rem; font-weight: 600; }
+
+.loading-panel p { margin-top: 4px; color: var(--color-ink-muted); max-width: 60ch; }
+
+.spinner {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-gold-soft);
+  border-top-color: var(--color-gold);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }

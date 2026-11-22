@@ -1,0 +1,43 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Anchors and focus jumps land below the fixed header. */
+html { scroll-padding-top: 150px; }
+
+body {
+  margin: 0;
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  line-height: 1.5;
+}
+
+h1, h2, h3, p, dl, dd { margin: 0; }
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+/* Keyboard users can jump past the header and the tabs. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  z-index: 200;
+  padding: 8px 14px;
+  background: var(--color-gold);
+  color: var(--color-page);
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.skip-link:focus { top: 8px; }
+
+:focus-visible { outline: 2px solid var(--color-gold); outline-offset: 2px; }

@@ -1,0 +1,35 @@
+:root {
+  --color-page: #eceee9;
+  --color-panel: #f8f9f6;
+  --color-border: #d6dad2;
+  --color-ink: #19231e;
+  --color-ink-muted: #5b665f;
+  --color-gold: #a67c00;
+  --color-gold-soft: #ead9a0;
+  --color-series-usd: #2c7a7b;
+  --color-series-fx: #8a4f7d;
+  --color-positive: #1d7a4b;
+  --color-negative: #b0382d;
+  --color-error-surface: #fbeceb;
+  --font-display: "Fraunces Variable", "Fraunces", Georgia, serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-page: #121815;
+    --color-panel: #1b231f;
+    --color-border: #2f3a34;
+    --color-ink: #e9ece6;
+    --color-ink-muted: #9aa69e;
+    --color-gold: #e0b73a;
+    --color-gold-soft: #4a3f17;
+    --color-series-usd: #5fc2c0;
+    --color-series-fx: #c98bbd;
+    --color-positive: #52c58a;
+    --color-negative: #f0786c;
+    --color-error-surface: #3a1f1c;
+    color-scheme: dark;
+  }
+}

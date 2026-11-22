@@ -1,0 +1,10 @@
+.badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.badge-running { background: var(--color-gold-soft); color: var(--color-ink); }
+
+.badge-success { background: transparent; color: var(--color-positive); border: 1px solid var(--color-positive); }

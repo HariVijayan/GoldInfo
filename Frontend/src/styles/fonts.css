@@ -1,0 +1,11 @@
+/*
+ * Fonts are bundled with the app, so no request goes to a third-party font
+ * server. Latin and Latin-extended cover English text and the rupee sign.
+ */
+@import "@fontsource-variable/fraunces/wght.css";
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-ext-400.css";
+@import "@fontsource/ibm-plex-sans/latin-ext-500.css";
+@import "@fontsource/ibm-plex-sans/latin-ext-600.css";

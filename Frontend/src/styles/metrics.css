@@ -1,0 +1,23 @@
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.metric-card {
+  min-width: 0;
+  padding: 16px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.metric-card h3 { margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; color: var(--color-ink-muted); }
+
+.metric-value { font-size: 1.35rem; font-weight: 600; overflow-wrap: anywhere; }
+
+.metric-card small { color: var(--color-ink-muted); }
+
+.tone-positive { color: var(--color-positive); }
+
+.tone-negative { color: var(--color-negative); }

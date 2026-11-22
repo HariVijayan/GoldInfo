@@ -1,0 +1,56 @@
+/*
+ * The result area of every tab: two columns on wide screens, one on narrow.
+ * Charts, the AI overview and tables span both columns (.span-both);
+ * statistics and other text-heavy panels take one column.
+ */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.dashboard-grid > .span-both { grid-column: 1 / -1; }
+
+/* Sections only exist to carry the column choice, so they add no box of their own. */
+.dashboard-section { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+
+/* Charts that group several views place them side by side when there is room. */
+.chart-panel-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.chart-panel-section { min-width: 0; }
+
+
+@media (max-width: 1000px) {
+  .dashboard-grid,
+  .chart-panel-sections { grid-template-columns: 1fr; }
+}
+
+/* The AI overview: the text flows in two columns where there is room. */
+.ai-overview-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ai-overview-text {
+  column-count: 2;
+  column-gap: 40px;
+  max-width: 150ch;
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+.ai-overview-text p { margin: 0 0 12px; break-inside: avoid; }
+.ai-overview-text p:last-child { margin-bottom: 0; }
+
+.badge-view { background: var(--color-gold-soft); color: var(--color-ink); }
+.badge-quiet { background: transparent; border: 1px solid var(--color-border); color: var(--color-ink-muted); }
+
+@media (max-width: 1000px) {
+  .ai-overview-text { column-count: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
